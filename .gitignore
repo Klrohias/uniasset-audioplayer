@@ -1,0 +1,19 @@
+# MacOS Internals
+.DS_Store
+._*
+.vs
+.idea
+
+# Rust
+target/
+Cargo.lock
+**/*.rs.bk
+*.pdb
+
+# Build artifacts
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.lib
