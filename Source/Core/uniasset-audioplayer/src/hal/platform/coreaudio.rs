@@ -4,13 +4,6 @@
 //! pipeline. The render callback is invoked on a high-priority audio thread
 //! by the system and calls [`AudioCallback::pull`] to fetch PCM samples.
 //!
-//! # Lock-free callback path
-//!
-//! Unlike a naive Mutex-based approach, this backend stores a raw
-//! `*const dyn AudioCallback` pointer in the AudioUnit's render callback
-//! reference context. Because [`AudioCallback::pull`] takes `&self` (not
-//! `&mut self`), the audio thread can access the callback without any
-//! synchronization — zero locks, zero contention, zero glitch risk.
 
 use coreaudio_sys::{
     kAudioFormatFlagIsFloat, kAudioFormatFlagIsPacked, kAudioFormatLinearPCM,
