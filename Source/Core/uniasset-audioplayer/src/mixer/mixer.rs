@@ -1,7 +1,8 @@
 use std::cell::UnsafeCell;
-use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use parking_lot::Mutex;
 
 use crate::hal::AudioCallback;
@@ -55,7 +56,7 @@ struct ScratchBuf {
 /// # Features
 ///
 /// - **Snapshot-based mixing**: audio thread reads a frozen snapshot via
-///   atomic pointer swap — zero locks on the hot path.
+///   `ArcSwap::load()` — zero locks, memory-safe by construction.
 /// - **Resampling**: streams with different sample rates are resampled
 ///   (linear interpolation) to match the mixer's target rate.
 /// - **Channel adaptation**: extra channels are trimmed; missing channels
@@ -78,8 +79,10 @@ pub struct Mixer {
     /// Target output format (usually matches hardware).
     format: AudioFormat,
 
-    /// Atomic pointer to the current read-only snapshot.
-    snapshot: AtomicPtr<MixerSnapshot>,
+    /// Current read-only snapshot, atomically swapped via `ArcSwap`.
+    /// `load()` returns a temporary `Arc` that keeps the snapshot alive
+    /// for the duration of the audio callback — no unsafe, no deferred-free.
+    snapshot: ArcSwap<MixerSnapshot>,
 
     /// Live stream list — only accessed from the control thread.
     /// Protected by a mutex; uncontended (only the control thread writes,
@@ -90,15 +93,11 @@ pub struct Mixer {
     /// Wrapped in `UnsafeCell` — only the audio thread accesses this.
     /// Pre-allocated capacity removes allocation from the hot path.
     scratch: UnsafeCell<ScratchBuf>,
-
-    /// Previous snapshot pending free. Freed on the next swap so the audio
-    /// thread has time to finish any in-flight `pull()`.
-    pending_free: Mutex<Option<*mut MixerSnapshot>>,
 }
 
-// Safety: Mixer is used as an AudioCallback, which requires Send + Sync.
-// All mutable state is behind atomics, UnsafeCell (single-thread access),
-// or Mutex (control-thread-only).
+// Safety: Mixer requires Send + Sync for AudioCallback.
+// All mutable state is behind atomics, ArcSwap, UnsafeCell
+// (single-thread access), or Mutex (control-thread-only).
 unsafe impl Send for Mixer {}
 unsafe impl Sync for Mixer {}
 
@@ -110,12 +109,6 @@ impl Mixer {
     pub fn new(sample_rate: u32, channels: u16) -> Self {
         let format = AudioFormat::new(sample_rate, channels);
 
-        // Create an empty initial snapshot so the audio thread never
-        // sees a null pointer.
-        let initial = Box::new(MixerSnapshot {
-            entries: Vec::new(),
-        });
-
         // Pre-allocate scratch buffers for the audio hot path.
         // 8192 samples for stream_buf covers any realistic callback size
         // (256–1024 frames) with upsampling ratio (e.g. 96 kHz → 44.1 kHz).
@@ -126,13 +119,14 @@ impl Mixer {
 
         Self {
             format,
-            snapshot: AtomicPtr::new(Box::into_raw(initial)),
+            snapshot: ArcSwap::new(Arc::new(MixerSnapshot {
+                entries: Vec::new(),
+            })),
             entries: Mutex::new(Vec::new()),
             scratch: UnsafeCell::new(ScratchBuf {
                 stream_buf,
                 mix_buf,
             }),
-            pending_free: Mutex::new(None),
         }
     }
 
@@ -178,25 +172,13 @@ impl Mixer {
         }
     }
 
-    /// Rebuild the snapshot from the current live entry list and swap it
-    /// into the atomic pointer.
+    /// Rebuild the snapshot from the current live entry list and publish it
+    /// via `ArcSwap::store`. The old snapshot is retained as long as any
+    /// in-flight audio callback holds a reference via `load()`.
     fn rebuild_snapshot(&self) {
         let mixer_rate = self.format.sample_rate as f64;
 
         let entries_guard = self.entries.lock();
-
-        // Drain any pending modifier frees from the control thread.
-        // Safe: the audio thread will switch to the new snapshot after
-        // the swap below, so old modifier pointers are unreachable.
-        for entry in entries_guard.iter() {
-            let pending = entry
-                .state
-                .modifier_pending_free
-                .swap(std::ptr::null_mut(), Ordering::AcqRel);
-            if !pending.is_null() {
-                unsafe { drop(Box::from_raw(pending)); }
-            }
-        }
 
         let entries: Vec<SnapshotEntry> = entries_guard
             .iter()
@@ -215,21 +197,7 @@ impl Mixer {
 
         drop(entries_guard);
 
-        let new_snapshot = Box::new(MixerSnapshot { entries });
-        let new_ptr = Box::into_raw(new_snapshot);
-
-        // Swap: audio thread now sees the new snapshot.
-        let old_ptr = self.snapshot.swap(new_ptr, Ordering::AcqRel);
-
-        // Free the previous pending snapshot — enough time has passed that
-        // any in-flight audio callback has completed.
-        let mut pending = self.pending_free.lock();
-        if let Some(ptr) = pending.take() {
-            unsafe {
-                drop(Box::from_raw(ptr));
-            }
-        }
-        *pending = Some(old_ptr);
+        self.snapshot.store(Arc::new(MixerSnapshot { entries }));
     }
 }
 
@@ -241,10 +209,8 @@ impl AudioCallback for Mixer {
         // Zero the output — we'll add (mix) into it.
         buffer.fill(0.0);
 
-        // ── Load snapshot (lock-free) ──────────────────────────────────
-        let snapshot_ptr = self.snapshot.load(Ordering::Acquire);
-        // Safety: snapshot_ptr is never null (initialized with empty snapshot).
-        let snapshot = unsafe { &*snapshot_ptr };
+        // ── Load snapshot (lock-free, memory-safe via ArcSwap) ──────────
+        let snapshot = self.snapshot.load();
 
         if snapshot.entries.is_empty() {
             return frame_count;
@@ -314,17 +280,12 @@ impl AudioCallback for Mixer {
             let effective_samples = effective_frames * stream_channels;
             scratch.stream_buf.resize(effective_samples, 0.0);
 
-            // ── Apply modifier if set (lock-free, before mixing!) ──────────
+            // ── Apply modifier if set (lock-free, ArcSwap) ──────────────
             let volume = f32::from_bits(entry.state.volume.load(Ordering::Relaxed));
 
-            let modifier_ptr = entry.state.modifier.load(Ordering::Acquire);
-            if !modifier_ptr.is_null() {
-                // Safety: The pointer was created via Box::into_raw in
-                // set_modifier(). Deferred-free guarantees the pointer
-                // is not freed while any audio callback might observe it.
-                unsafe {
-                    (*modifier_ptr)(&mut scratch.stream_buf[..read_samples]);
-                }
+            let modifier_guard = entry.state.modifier.load();
+            if let Some(ref modifier) = **modifier_guard {
+                modifier(&mut scratch.stream_buf[..read_samples]);
             }
 
             // ── Resample + channel-convert + mix ───────────────────────
@@ -422,25 +383,6 @@ fn mix_resampled(
             let sample = s0 + (s1 - s0) * frac as f32;
 
             dst[out_offset + ch] += sample * volume;
-        }
-    }
-}
-
-impl Drop for Mixer {
-    fn drop(&mut self) {
-        // Free the current snapshot.
-        let ptr = self.snapshot.load(Ordering::Relaxed);
-        if !ptr.is_null() {
-            unsafe {
-                drop(Box::from_raw(ptr));
-            }
-        }
-
-        // Free any pending snapshot.
-        if let Some(ptr) = self.pending_free.lock().take() {
-            unsafe {
-                drop(Box::from_raw(ptr));
-            }
         }
     }
 }

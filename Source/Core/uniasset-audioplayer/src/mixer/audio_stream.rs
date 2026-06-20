@@ -46,6 +46,7 @@ pub trait AudioStream: Send + Sync {
     fn seek(&self, frame: u64) -> Result<(), AudioError>;
 
     /// Whether the stream has reached its end.
+    /// Must be wait-free — called from the real-time audio thread.
     fn is_eof(&self) -> bool;
 
     /// Number of audio channels (1 = mono, 2 = stereo).

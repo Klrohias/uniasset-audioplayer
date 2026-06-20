@@ -1,5 +1,7 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
+use arc_swap::ArcSwap;
 
 use crate::mixer::AudioStream;
 use crate::AudioError;
@@ -31,17 +33,11 @@ pub(crate) struct StreamState {
     /// The control thread checks this flag and removes the stream.
     pub eof: AtomicBool,
 
-    /// Optional pre-mix modifier callback — lock-free via `AtomicPtr`.
-    /// The audio thread loads with `Acquire` and calls through it; the
-    /// control thread swaps with `AcqRel` via `set_modifier()`.
-    /// `null` means no modifier is set.
-    pub modifier: AtomicPtr<ModifierFn>,
-
-    /// Previous modifier pointer awaiting deferred free.
-    /// The control thread frees this pointer in `set_modifier()` (next
-    /// modifier change) or `rebuild_snapshot()` — both guarantee the
-    /// audio thread has moved past the old value.
-    pub modifier_pending_free: AtomicPtr<ModifierFn>,
+    /// Optional pre-mix modifier callback — lock-free via `ArcSwap`.
+    /// The audio thread loads a temporary `Arc` via `load()`; the control
+    /// thread stores via `set_modifier()`. Memory-safe by construction:
+    /// old modifiers are freed when their `Arc` refcount hits zero.
+    pub modifier: ArcSwap<Option<ModifierFn>>,
 }
 
 impl StreamState {
@@ -51,23 +47,7 @@ impl StreamState {
             paused: AtomicBool::new(false),
             volume: AtomicU32::new(f32::to_bits(1.0)),
             eof: AtomicBool::new(false),
-            modifier: AtomicPtr::new(std::ptr::null_mut()),
-            modifier_pending_free: AtomicPtr::new(std::ptr::null_mut()),
-        }
-    }
-}
-
-impl Drop for StreamState {
-    fn drop(&mut self) {
-        // Free the live modifier pointer (if any).
-        let ptr = *self.modifier.get_mut();
-        if !ptr.is_null() {
-            unsafe { drop(Box::from_raw(ptr)); }
-        }
-        // Free the pending-free modifier pointer (if any).
-        let ptr = *self.modifier_pending_free.get_mut();
-        if !ptr.is_null() {
-            unsafe { drop(Box::from_raw(ptr)); }
+            modifier: ArcSwap::new(Arc::new(None)),
         }
     }
 }
@@ -87,7 +67,7 @@ pub struct PlayHandle {
     pub(crate) stream: Arc<dyn AudioStream>,
 }
 
-// Safety: all mutable state is behind atomics (including AtomicPtr for modifier).
+// Safety: all mutable state is behind atomics or ArcSwap.
 unsafe impl Send for PlayHandle {}
 unsafe impl Sync for PlayHandle {}
 
@@ -178,32 +158,12 @@ impl PlayHandle {
     /// or panning.
     ///
     /// The modifier takes effect immediately — the next audio callback
-    /// will see it. The old modifier is freed via deferred-free (on the
-    /// next modifier change or snapshot rebuild) so the audio thread
-    /// never sees a dangling pointer.
+    /// will see it. Memory safe by construction via `ArcSwap`:
+    /// old modifiers are freed when their `Arc` refcount hits zero
+    /// (all audio callbacks have moved past them).
     pub fn set_modifier(&self, modifier: Option<ModifierFn>) {
-        // Box the new modifier (if any) into a raw pointer.
-        let new_ptr = match modifier {
-            Some(f) => Box::into_raw(Box::new(f)),
-            None => std::ptr::null_mut(),
-        };
-
-        // Atomically swap: audio thread sees the new modifier immediately.
-        let old_ptr = self.state.modifier.swap(new_ptr, Ordering::AcqRel);
-
-        // Deferred-free the old pointer: stash it in pending_free.
-        // If there's already a pending pointer, free it now — it has
-        // survived at least one full pull() cycle since the last swap.
-        if !old_ptr.is_null() {
-            let prev_pending = self
-                .state
-                .modifier_pending_free
-                .swap(old_ptr, Ordering::AcqRel);
-            if !prev_pending.is_null() {
-                // Safety: prev_pending was the live modifier at least two
-                // swaps ago. The audio thread has moved past it.
-                unsafe { drop(Box::from_raw(prev_pending)); }
-            }
-        }
+        self.state
+            .modifier
+            .store(Arc::new(modifier));
     }
 }

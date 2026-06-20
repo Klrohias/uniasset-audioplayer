@@ -7,9 +7,8 @@ edition = "2021"
 name = "uniasset_audioplayer"
 
 [dependencies]
-# Lock-free SPSC queue for real-time safe command passing between
-# the control thread and the audio thread (Mixer).
-crossbeam-queue = "0.3"
+# Atomic Arc swapping for lock-free snapshot management (Mixer).
+arc-swap = "1"
 # Efficient parking lot based synchronization primitives
 parking_lot = "0.12"
 
