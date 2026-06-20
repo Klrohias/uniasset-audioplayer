@@ -470,8 +470,12 @@ fn wasapi_thread(
     // COM contract: all interface references must be released before
     // CoUninitialize. Local drops here happen before the thread-local
     // ComGuard destructor runs, so the order is correct.
-    drop(audio_client); // → IAudioClient::Release()
+    //
+    // Drop order matters: IAudioRenderClient is obtained from
+    // IAudioClient::GetService(), so it is a child object that must be
+    // released *before* its parent.
     drop(render_client); // → IAudioRenderClient::Release()
+    drop(audio_client); // → IAudioClient::Release()
     drop(event_handle); // → CloseHandle (not COM, but close before teardown)
     drop(callback); // → Box<dyn AudioCallback> (not COM)
     drop(stop_rx); // → mpsc::Receiver (not COM)
