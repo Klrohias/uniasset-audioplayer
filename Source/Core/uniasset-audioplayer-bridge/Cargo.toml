@@ -1,0 +1,11 @@
+[package]
+name = "uniasset-audioplayer-bridge"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "uniasset_audioplayer"
+crate-type = ["staticlib", "cdylib"]
+
+[dependencies]
+uniasset-audioplayer = { path = "../uniasset-audioplayer" }

@@ -1,10 +1,10 @@
 [workspace]
 resolver = "3"
-members = ["uniasset-audioplayer"]
+members = ["uniasset-audioplayer", "uniasset-audioplayer-bridge"]
 
 
 [profile.release]
-lto = true
-codegen-units = 1
-strip = true
-opt-level = "s"
+lto = "fat"
+opt-level = "z"
+panic = "abort"
+strip = "symbols"
