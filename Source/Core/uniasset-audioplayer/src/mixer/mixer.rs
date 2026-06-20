@@ -53,18 +53,6 @@ struct ScratchBuf {
 /// The mixer implements [`AudioCallback`] so it can be passed directly to
 /// [`AudioDevice::start`](crate::hal::AudioDevice::start).
 ///
-/// # Features
-///
-/// - **Snapshot-based mixing**: audio thread reads a frozen snapshot via
-///   `ArcSwap::load()` — zero locks, memory-safe by construction.
-/// - **Resampling**: streams with different sample rates are resampled
-///   (linear interpolation) to match the mixer's target rate.
-/// - **Channel adaptation**: extra channels are trimmed; missing channels
-///   are filled by repeating the available channels.
-/// - **EOF cleanup**: streams that return 0 from `read()` are flagged
-///   for removal; call [`cleanup_eof`](Mixer::cleanup_eof) periodically
-///   from the control thread.
-///
 /// # Example
 ///
 /// ```ignore
@@ -165,7 +153,14 @@ impl Mixer {
     pub fn cleanup_eof(&self) {
         let mut entries = self.entries.lock();
         let prev_len = entries.len();
-        entries.retain(|entry| !entry.state.eof.load(Ordering::Relaxed));
+        entries.retain(|entry| {
+            if entry.state.eof.load(Ordering::Relaxed) {
+                entry.state.alive.store(false, Ordering::Release);
+                false
+            } else {
+                true
+            }
+        });
         if entries.len() != prev_len {
             drop(entries);
             self.rebuild_snapshot();
@@ -178,26 +173,42 @@ impl Mixer {
     fn rebuild_snapshot(&self) {
         let mixer_rate = self.format.sample_rate as f64;
 
-        let entries_guard = self.entries.lock();
+        // Carry forward resample positions from the current snapshot so
+        // existing streams don't reset to 0 on every rebuild.
+        let old_snapshot = self.snapshot.load();
 
-        let entries: Vec<SnapshotEntry> = entries_guard
-            .iter()
-            .map(|entry| {
-                let stream_rate = entry.stream.sample_rate();
-                let ratio = stream_rate as f64 / mixer_rate;
-                SnapshotEntry {
-                    stream: Arc::clone(&entry.stream),
-                    state: Arc::clone(&entry.state),
-                    stream_channels: entry.stream.channels(),
-                    ratio,
-                    position: AtomicU64::new(0u64),
-                }
-            })
-            .collect();
+        let new_entries = {
+            let entries_guard = self.entries.lock();
+            entries_guard
+                .iter()
+                .map(|entry| {
+                    let stream_rate = entry.stream.sample_rate();
+                    let ratio = stream_rate as f64 / mixer_rate;
 
-        drop(entries_guard);
+                    // FIXME: performance
+                    // Clone the old position if this stream was already
+                    // in the previous snapshot; new streams start at 0.
+                    let old_pos = old_snapshot
+                        .entries
+                        .iter()
+                        .find(|old| Arc::ptr_eq(&old.state, &entry.state))
+                        .map(|old| old.position.load(Ordering::Relaxed))
+                        .unwrap_or(0u64);
 
-        self.snapshot.store(Arc::new(MixerSnapshot { entries }));
+                    SnapshotEntry {
+                        stream: Arc::clone(&entry.stream),
+                        state: Arc::clone(&entry.state),
+                        stream_channels: entry.stream.channels(),
+                        ratio,
+                        position: AtomicU64::new(old_pos),
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+
+        self.snapshot.store(Arc::new(MixerSnapshot {
+            entries: new_entries,
+        }));
     }
 }
 
