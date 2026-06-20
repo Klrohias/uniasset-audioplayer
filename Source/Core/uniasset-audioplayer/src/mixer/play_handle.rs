@@ -1,7 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-
-use parking_lot::RwLock;
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 
 use crate::mixer::AudioStream;
 use crate::AudioError;
@@ -28,14 +26,22 @@ pub(crate) struct StreamState {
     /// Volume multiplier (0.0 .. 1.0) stored as `f32::to_bits()`.
     pub volume: AtomicU32,
 
-    /// Set to `true` by the audio thread when `AudioStream::read()` returns 0.
+    /// Set to `true` by the audio thread when `AudioStream::read()` returns 0
+    /// and `AudioStream::is_eof()` returns true.
     /// The control thread checks this flag and removes the stream.
     pub eof: AtomicBool,
 
-    /// Optional pre-mix modifier callback. Writes are rare (only via
-    /// `PlayHandle::set_modifier`); reads happen on every audio callback.
-    /// A `parking_lot::RwLock` gives essentially uncontended read access.
-    pub modifier: RwLock<Option<ModifierFn>>,
+    /// Optional pre-mix modifier callback — lock-free via `AtomicPtr`.
+    /// The audio thread loads with `Acquire` and calls through it; the
+    /// control thread swaps with `AcqRel` via `set_modifier()`.
+    /// `null` means no modifier is set.
+    pub modifier: AtomicPtr<ModifierFn>,
+
+    /// Previous modifier pointer awaiting deferred free.
+    /// The control thread frees this pointer in `set_modifier()` (next
+    /// modifier change) or `rebuild_snapshot()` — both guarantee the
+    /// audio thread has moved past the old value.
+    pub modifier_pending_free: AtomicPtr<ModifierFn>,
 }
 
 impl StreamState {
@@ -45,7 +51,23 @@ impl StreamState {
             paused: AtomicBool::new(false),
             volume: AtomicU32::new(f32::to_bits(1.0)),
             eof: AtomicBool::new(false),
-            modifier: RwLock::new(None),
+            modifier: AtomicPtr::new(std::ptr::null_mut()),
+            modifier_pending_free: AtomicPtr::new(std::ptr::null_mut()),
+        }
+    }
+}
+
+impl Drop for StreamState {
+    fn drop(&mut self) {
+        // Free the live modifier pointer (if any).
+        let ptr = *self.modifier.get_mut();
+        if !ptr.is_null() {
+            unsafe { drop(Box::from_raw(ptr)); }
+        }
+        // Free the pending-free modifier pointer (if any).
+        let ptr = *self.modifier_pending_free.get_mut();
+        if !ptr.is_null() {
+            unsafe { drop(Box::from_raw(ptr)); }
         }
     }
 }
@@ -65,7 +87,7 @@ pub struct PlayHandle {
     pub(crate) stream: Arc<dyn AudioStream>,
 }
 
-// Safety: all mutable state is behind atomics or a RwLock.
+// Safety: all mutable state is behind atomics (including AtomicPtr for modifier).
 unsafe impl Send for PlayHandle {}
 unsafe impl Sync for PlayHandle {}
 
@@ -154,7 +176,34 @@ impl PlayHandle {
     ///
     /// This can be used to implement per-stream effects such as filtering
     /// or panning.
+    ///
+    /// The modifier takes effect immediately — the next audio callback
+    /// will see it. The old modifier is freed via deferred-free (on the
+    /// next modifier change or snapshot rebuild) so the audio thread
+    /// never sees a dangling pointer.
     pub fn set_modifier(&self, modifier: Option<ModifierFn>) {
-        *self.state.modifier.write() = modifier;
+        // Box the new modifier (if any) into a raw pointer.
+        let new_ptr = match modifier {
+            Some(f) => Box::into_raw(Box::new(f)),
+            None => std::ptr::null_mut(),
+        };
+
+        // Atomically swap: audio thread sees the new modifier immediately.
+        let old_ptr = self.state.modifier.swap(new_ptr, Ordering::AcqRel);
+
+        // Deferred-free the old pointer: stash it in pending_free.
+        // If there's already a pending pointer, free it now — it has
+        // survived at least one full pull() cycle since the last swap.
+        if !old_ptr.is_null() {
+            let prev_pending = self
+                .state
+                .modifier_pending_free
+                .swap(old_ptr, Ordering::AcqRel);
+            if !prev_pending.is_null() {
+                // Safety: prev_pending was the live modifier at least two
+                // swaps ago. The audio thread has moved past it.
+                unsafe { drop(Box::from_raw(prev_pending)); }
+            }
+        }
     }
 }

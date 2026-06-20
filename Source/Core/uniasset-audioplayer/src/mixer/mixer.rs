@@ -1,3 +1,4 @@
+use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -86,8 +87,9 @@ pub struct Mixer {
     entries: Mutex<Vec<MixerEntry>>,
 
     /// Scratch buffers for the audio thread.
-    /// Protected by a mutex; uncontended because only the audio thread locks it.
-    scratch: Mutex<ScratchBuf>,
+    /// Wrapped in `UnsafeCell` — only the audio thread accesses this.
+    /// Pre-allocated capacity removes allocation from the hot path.
+    scratch: UnsafeCell<ScratchBuf>,
 
     /// Previous snapshot pending free. Freed on the next swap so the audio
     /// thread has time to finish any in-flight `pull()`.
@@ -95,8 +97,8 @@ pub struct Mixer {
 }
 
 // Safety: Mixer is used as an AudioCallback, which requires Send + Sync.
-// All mutable state is behind atomics, Mutex, or accessed from a single
-// thread by convention.
+// All mutable state is behind atomics, UnsafeCell (single-thread access),
+// or Mutex (control-thread-only).
 unsafe impl Send for Mixer {}
 unsafe impl Sync for Mixer {}
 
@@ -114,13 +116,21 @@ impl Mixer {
             entries: Vec::new(),
         });
 
+        // Pre-allocate scratch buffers for the audio hot path.
+        // 8192 samples for stream_buf covers any realistic callback size
+        // (256–1024 frames) with upsampling ratio (e.g. 96 kHz → 44.1 kHz).
+        // 4096 samples for mix_buf covers 1024 frames × 4 channels.
+        // Growth beyond these is a one-time allocation, not steady-state.
+        let stream_buf = Vec::with_capacity(8192);
+        let mix_buf = Vec::with_capacity(4096);
+
         Self {
             format,
             snapshot: AtomicPtr::new(Box::into_raw(initial)),
             entries: Mutex::new(Vec::new()),
-            scratch: Mutex::new(ScratchBuf {
-                stream_buf: Vec::new(),
-                mix_buf: Vec::new(),
+            scratch: UnsafeCell::new(ScratchBuf {
+                stream_buf,
+                mix_buf,
             }),
             pending_free: Mutex::new(None),
         }
@@ -173,9 +183,22 @@ impl Mixer {
     fn rebuild_snapshot(&self) {
         let mixer_rate = self.format.sample_rate as f64;
 
-        let entries: Vec<SnapshotEntry> = self
-            .entries
-            .lock()
+        let entries_guard = self.entries.lock();
+
+        // Drain any pending modifier frees from the control thread.
+        // Safe: the audio thread will switch to the new snapshot after
+        // the swap below, so old modifier pointers are unreachable.
+        for entry in entries_guard.iter() {
+            let pending = entry
+                .state
+                .modifier_pending_free
+                .swap(std::ptr::null_mut(), Ordering::AcqRel);
+            if !pending.is_null() {
+                unsafe { drop(Box::from_raw(pending)); }
+            }
+        }
+
+        let entries: Vec<SnapshotEntry> = entries_guard
             .iter()
             .map(|entry| {
                 let stream_rate = entry.stream.sample_rate();
@@ -189,6 +212,8 @@ impl Mixer {
                 }
             })
             .collect();
+
+        drop(entries_guard);
 
         let new_snapshot = Box::new(MixerSnapshot { entries });
         let new_ptr = Box::into_raw(new_snapshot);
@@ -225,9 +250,10 @@ impl AudioCallback for Mixer {
             return frame_count;
         }
 
-        // ── Acquire scratch buffers ────────────────────────────────────
-        let mut scratch = self.scratch.lock();
-        let scratch = &mut *scratch;
+        // ── Acquire scratch buffers (lock-free) ──────────────────────────
+        // Safety: Only the audio thread calls pull(). Calls are serialized
+        // by the OS audio callback, so there is never concurrent access.
+        let scratch = unsafe { &mut *self.scratch.get() };
 
         // Ensure the mix accumulation buffer is large enough and zeroed.
         scratch.mix_buf.resize(buffer.len(), 0.0);
@@ -268,12 +294,15 @@ impl AudioCallback for Mixer {
                 .read(&mut scratch.stream_buf, need_frames as u64);
 
             if samples_read == 0 {
-                // Stream has ended — flag for cleanup.
-                entry.state.eof.store(true, Ordering::Release);
-                // Update position for next call.
-                entry
-                    .position
-                    .store(f64::to_bits(end_pos), Ordering::Relaxed);
+                if entry.stream.is_eof() {
+                    // Stream has reached its end — flag for cleanup.
+                    entry.state.eof.store(true, Ordering::Release);
+                    // Update position for next call.
+                    entry
+                        .position
+                        .store(f64::to_bits(end_pos), Ordering::Relaxed);
+                }
+                // If not eof, just skip this round (no data available yet).
                 continue;
             }
 
@@ -285,12 +314,17 @@ impl AudioCallback for Mixer {
             let effective_samples = effective_frames * stream_channels;
             scratch.stream_buf.resize(effective_samples, 0.0);
 
-            // ── Apply modifier if set (before mixing!) ────────────────
+            // ── Apply modifier if set (lock-free, before mixing!) ──────────
             let volume = f32::from_bits(entry.state.volume.load(Ordering::Relaxed));
 
-            if let Some(ref modifier) = *entry.state.modifier.read() {
-                // Modifier receives the raw stream buffer pre-mix.
-                modifier(&mut scratch.stream_buf[..read_samples]);
+            let modifier_ptr = entry.state.modifier.load(Ordering::Acquire);
+            if !modifier_ptr.is_null() {
+                // Safety: The pointer was created via Box::into_raw in
+                // set_modifier(). Deferred-free guarantees the pointer
+                // is not freed while any audio callback might observe it.
+                unsafe {
+                    (*modifier_ptr)(&mut scratch.stream_buf[..read_samples]);
+                }
             }
 
             // ── Resample + channel-convert + mix ───────────────────────
