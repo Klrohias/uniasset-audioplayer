@@ -1,3 +1,8 @@
+# Use build-std to compile the standard library from source with our release
+# profile (lto=fat, opt-level=z, panic=abort). Requires nightly toolchain.
+[unstable]
+build-std = ["std", "panic_abort"]
+
 [target.aarch64-apple-ios]
 rustflags = [
     "-C",

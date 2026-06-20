@@ -8,11 +8,16 @@
 use coreaudio_sys::{
     kAudioFormatFlagIsFloat, kAudioFormatFlagIsPacked, kAudioFormatLinearPCM,
     kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, kAudioUnitScope_Output,
-    kAudioUnitSubType_DefaultOutput, kAudioUnitType_Output, AudioComponentDescription,
+    kAudioUnitType_Output, AudioComponentDescription,
     AudioComponentFindNext, AudioComponentInstanceDispose, AudioComponentInstanceNew,
     AudioOutputUnitStart, AudioOutputUnitStop, AudioStreamBasicDescription, AudioUnitGetProperty,
     AudioUnitInitialize, AudioUnitRenderActionFlags, AudioUnitSetProperty, AudioUnitUninitialize,
 };
+
+#[cfg(target_os = "macos")]
+use coreaudio_sys::kAudioUnitSubType_DefaultOutput as kOutputUnitSubType;
+#[cfg(target_os = "ios")]
+use coreaudio_sys::kAudioUnitSubType_GenericOutput as kOutputUnitSubType;
 
 use std::ffi::c_void;
 
@@ -114,7 +119,7 @@ impl CoreAudioDevice {
     pub fn new() -> Result<Self, AudioError> {
         let desc = AudioComponentDescription {
             componentType: kAudioUnitType_Output,
-            componentSubType: kAudioUnitSubType_DefaultOutput,
+            componentSubType: kOutputUnitSubType,
             componentManufacturer: 0x6170706c, // 'appl'
             componentFlags: 0,
             componentFlagsMask: 0,
