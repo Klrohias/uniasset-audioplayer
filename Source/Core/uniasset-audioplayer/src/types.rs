@@ -11,7 +11,7 @@ pub struct AudioFormat {
 
 impl AudioFormat {
     /// Create a new `AudioFormat` with the given sample rate and channel count.
-    pub fn new(sample_rate: u32, channels: u16) -> Self {
+    pub const fn new(sample_rate: u32, channels: u16) -> Self {
         Self {
             sample_rate,
             channels,
