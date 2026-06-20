@@ -237,16 +237,15 @@ impl AudioDevice for WasapiDevice {
 
         let buffer_frame_count = self.buffer_frame_count;
         let channels = self.format.channels;
-        let sample_count = buffer_frame_count as usize * channels as usize;
 
         // Pre-fill the first buffer *before* Start() so the engine has data
         // when playback begins — eliminates the initial ~10 ms silence gap.
+        // Before Start(), the entire buffer is available (zero padding).
         let callback_alive = AtomicBool::new(true);
         fill_buffer(
             &*callback,
             &render_client,
             buffer_frame_count,
-            sample_count,
             channels,
             &callback_alive,
         );
@@ -260,6 +259,9 @@ impl AudioDevice for WasapiDevice {
 
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
 
+        // Clone IAudioClient so the thread can call GetCurrentPadding().
+        // COM interfaces are reference-counted; Clone calls AddRef.
+        let send_audio_client = SendCom(audio_client.clone());
         // Wrap non-Send types for the thread boundary.
         let send_render = SendCom(render_client);
 
@@ -269,10 +271,10 @@ impl AudioDevice for WasapiDevice {
             .spawn(move || {
                 wasapi_thread(
                     callback,
+                    send_audio_client,
                     send_render,
                     event_handle,
                     buffer_frame_count,
-                    sample_count,
                     channels,
                     stop_rx,
                     callback_alive,
@@ -364,15 +366,16 @@ impl Drop for WasapiDevice {
 /// 1. Initialises COM (multi-threaded apartment).
 /// 2. Registers with MMCSS ("Audio" task) for real-time scheduling priority.
 /// 3. Loops on `WaitForSingleObject` with a 50 ms timeout:
-///    - `WAIT_OBJECT_0` → buffer ready → fill it (panic-safe).
+///    - `WAIT_OBJECT_0` → query available frames via `GetCurrentPadding`,
+///      fill exactly that many frames into the render buffer.
 ///    - `WAIT_TIMEOUT` → check stop signal → exit if set.
 ///    - Other (`WAIT_FAILED`, …) → brief sleep + check stop signal.
 fn wasapi_thread(
     callback: Box<dyn AudioCallback>,
+    audio_client: SendCom<IAudioClient>,
     render_client: SendCom<IAudioRenderClient>,
     event_handle: SendHandle,
     buffer_frame_count: u32,
-    sample_count: usize,
     channels: u16,
     stop_rx: mpsc::Receiver<()>,
     callback_alive: AtomicBool,
@@ -389,6 +392,7 @@ fn wasapi_thread(
     let mmcss_handle =
         unsafe { AvSetMmThreadCharacteristicsW(&HSTRING::from("Audio"), &mut task_index) };
 
+    let client = &audio_client.0;
     let render = &render_client.0;
     let event = event_handle.0;
 
@@ -401,11 +405,30 @@ fn wasapi_thread(
 
         match wait_result {
             WAIT_OBJECT_0 => {
+                // In event-driven shared mode, the event signals when a
+                // period of the buffer becomes available.  We must query
+                // the current padding to know exactly how many frames we
+                // can write, rather than always requesting the full buffer
+                // size (which returns AUDCLNT_E_BUFFER_TOO_LARGE).
+                let available = match unsafe { client.GetCurrentPadding() } {
+                    Ok(padding) => buffer_frame_count.saturating_sub(padding),
+                    Err(_) => {
+                        consecutive_failures += 1;
+                        if consecutive_failures >= 3 {
+                            break;
+                        }
+                        continue;
+                    }
+                };
+
+                if available == 0 {
+                    continue;
+                }
+
                 if fill_buffer(
                     &*callback,
                     render,
-                    buffer_frame_count,
-                    sample_count,
+                    available,
                     channels,
                     &callback_alive,
                 ) {
@@ -447,6 +470,7 @@ fn wasapi_thread(
     // COM contract: all interface references must be released before
     // CoUninitialize. Local drops here happen before the thread-local
     // ComGuard destructor runs, so the order is correct.
+    drop(audio_client); // → IAudioClient::Release()
     drop(render_client); // → IAudioRenderClient::Release()
     drop(event_handle); // → CloseHandle (not COM, but close before teardown)
     drop(callback); // → Box<dyn AudioCallback> (not COM)
@@ -458,6 +482,10 @@ fn wasapi_thread(
 
 /// Fill one WASAPI buffer with PCM data from the callback.
 ///
+/// `frame_count` is the number of frames requested from `GetBuffer` — this
+/// should be the number of *available* frames (i.e. `buffer_size - padding`),
+/// not the total buffer size.
+///
 /// **Panic-safe**: if [`AudioCallback::pull`] panics, the buffer is zero-filled,
 /// `ReleaseBuffer` is still called, and the callback is marked dead so it is
 /// not invoked again on subsequent buffers.
@@ -467,10 +495,15 @@ fn fill_buffer(
     callback: &dyn AudioCallback,
     render_client: &IAudioRenderClient,
     frame_count: u32,
-    sample_count: usize,
     channels: u16,
     callback_alive: &AtomicBool,
 ) -> bool {
+    if frame_count == 0 {
+        return true; // nothing to fill
+    }
+
+    let sample_count = frame_count as usize * channels as usize;
+
     let buffer_ptr = unsafe {
         match render_client.GetBuffer(frame_count) {
             Ok(ptr) => ptr,
