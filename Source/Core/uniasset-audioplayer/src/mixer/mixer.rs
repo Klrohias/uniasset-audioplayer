@@ -363,18 +363,24 @@ fn mix_resampled(
     ratio: f64,
     frame_count: usize,
     start_frame: u64,
-    _frac: f64,
+    frac: f64,
     src_frames: usize,
     volume: f32,
 ) {
     for out_frame in 0..frame_count {
-        // Position in the source stream (as f64 for sub-frame accuracy).
-        let src_pos = (start_frame as f64) + (out_frame as f64) * ratio;
-        let src_pos_clamped = src_pos.min((src_frames - 1) as f64).max(0.0);
+        // Position in the source stream (absolute, as f64).
+        // Include the fractional offset carried over from the previous
+        // callback to avoid phase discontinuities at buffer boundaries.
+        let src_pos = (start_frame as f64) + frac + (out_frame as f64) * ratio;
 
-        let idx0 = src_pos_clamped as usize;
+        // Convert absolute stream position to a relative index into the
+        // src buffer, which holds frames [start_frame, start_frame+src_frames).
+        let rel_pos = src_pos - (start_frame as f64);
+        let rel_pos_clamped = rel_pos.min((src_frames - 1) as f64).max(0.0);
+
+        let idx0 = rel_pos_clamped as usize;
         let idx1 = (idx0 + 1).min(src_frames - 1);
-        let frac = src_pos_clamped - (idx0 as f64);
+        let frac = rel_pos_clamped - (idx0 as f64);
 
         let out_offset = out_frame * dst_channels;
 
