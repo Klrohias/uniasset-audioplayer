@@ -14,12 +14,11 @@
 
 use coreaudio_sys::{
     kAudioFormatFlagIsFloat, kAudioFormatFlagIsPacked, kAudioFormatLinearPCM,
-    kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, kAudioUnitSubType_DefaultOutput,
-    kAudioUnitType_Output, AudioComponentDescription,
-    AudioComponentFindNext, AudioComponentInstanceNew, AudioComponentInstanceDispose,
-    AudioStreamBasicDescription, AudioUnitInitialize,
-    AudioUnitRenderActionFlags, AudioUnitSetProperty, AudioUnitUninitialize,
-    AudioOutputUnitStart, AudioOutputUnitStop,
+    kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, kAudioUnitScope_Output,
+    kAudioUnitSubType_DefaultOutput, kAudioUnitType_Output, AudioComponentDescription,
+    AudioComponentFindNext, AudioComponentInstanceDispose, AudioComponentInstanceNew,
+    AudioOutputUnitStart, AudioOutputUnitStop, AudioStreamBasicDescription, AudioUnitGetProperty,
+    AudioUnitInitialize, AudioUnitRenderActionFlags, AudioUnitSetProperty, AudioUnitUninitialize,
 };
 
 use std::ffi::c_void;
@@ -45,7 +44,7 @@ unsafe impl Sync for CallbackRef {}
 
 /// An audio output device backed by CoreAudio (AudioUnit).
 pub struct CoreAudioDevice {
-    #[allow(dead_code)]
+    /// Hardware format detected at open time.
     format: AudioFormat,
     audio_unit: Option<sys::AudioUnit>,
     /// Owns the callback Box and the CallbackRef indirection.
@@ -114,8 +113,12 @@ extern "C" fn render_callback(
 // ── CoreAudioDevice ────────────────────────────────────────────────────
 
 impl CoreAudioDevice {
-    /// Create a new CoreAudio output device for the requested format.
-    pub fn new(format: AudioFormat) -> Result<Self, AudioError> {
+    /// Create a new CoreAudio output device.
+    ///
+    /// Queries the hardware's native stream format (sample rate + channels)
+    /// from the default output AudioUnit. The sample format is forced to
+    /// 32-bit float interleaved — the lowest-latency path through CoreAudio.
+    pub fn new() -> Result<Self, AudioError> {
         let desc = AudioComponentDescription {
             componentType: kAudioUnitType_Output,
             componentSubType: kAudioUnitSubType_DefaultOutput,
@@ -125,8 +128,7 @@ impl CoreAudioDevice {
         };
 
         // Find the default output component.
-        let component =
-            unsafe { AudioComponentFindNext(std::ptr::null_mut(), &desc as *const _) };
+        let component = unsafe { AudioComponentFindNext(std::ptr::null_mut(), &desc as *const _) };
         if component.is_null() {
             return Err(AudioError::DeviceNotFound);
         }
@@ -138,7 +140,30 @@ impl CoreAudioDevice {
             return Err(AudioError::DeviceBusy);
         }
 
-        // Set the stream format (32-bit float, interleaved, non-native).
+        // Query the hardware's native output stream format to get the
+        // optimal sample rate and channel count for lowest latency.
+        let mut hw_asbd: AudioStreamBasicDescription = unsafe { std::mem::zeroed() };
+        let mut size = std::mem::size_of::<AudioStreamBasicDescription>() as u32;
+        let status = unsafe {
+            AudioUnitGetProperty(
+                audio_unit,
+                kAudioUnitProperty_StreamFormat,
+                kAudioUnitScope_Output,
+                0, // output bus
+                &mut hw_asbd as *mut _ as *mut c_void,
+                &mut size,
+            )
+        };
+        // Fall back to sensible defaults if the query fails.
+        let (sample_rate, channels) = if status == NO_ERR && hw_asbd.mChannelsPerFrame > 0 {
+            (hw_asbd.mSampleRate as u32, hw_asbd.mChannelsPerFrame as u16)
+        } else {
+            (48000, 2)
+        };
+
+        let format = AudioFormat::new(sample_rate, channels);
+
+        // Set the input stream format to 32-bit float at the hardware rate.
         let asbd = AudioStreamBasicDescription {
             mSampleRate: format.sample_rate as f64,
             mFormatID: kAudioFormatLinearPCM,
@@ -177,11 +202,11 @@ impl CoreAudioDevice {
 }
 
 impl AudioDevice for CoreAudioDevice {
+    fn format(&self) -> AudioFormat {
+        self.format
+    }
     fn start(&mut self, callback: Box<dyn AudioCallback>) -> Result<(), AudioError> {
-        let au = self
-            .audio_unit
-            .as_ref()
-            .ok_or(AudioError::DeviceNotFound)?;
+        let au = self.audio_unit.as_ref().ok_or(AudioError::DeviceNotFound)?;
 
         if self.running {
             return Ok(());

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["uniasset-audioplayer"]
+members = ["uniasset-audioplayer", "demo-console"]
 
 
 [profile.release]

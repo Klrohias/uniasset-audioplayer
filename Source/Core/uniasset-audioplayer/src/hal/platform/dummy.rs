@@ -14,6 +14,9 @@ use crate::hal::AudioCallback;
 use crate::hal::AudioDevice;
 use crate::types::AudioFormat;
 
+/// Default format for the dummy device: 48 kHz stereo.
+const DEFAULT_FORMAT: AudioFormat = AudioFormat::new(48000, 2);
+
 /// How often the dummy device calls `pull()` (every ~10 ms = 100 Hz).
 const PULL_INTERVAL_MS: u64 = 10;
 
@@ -29,9 +32,9 @@ unsafe impl Send for DummyDevice {}
 
 impl DummyDevice {
     /// Create a new dummy device.
-    pub fn new(format: AudioFormat) -> Self {
+    pub fn new() -> Self {
         Self {
-            format,
+            format: DEFAULT_FORMAT,
             stop_tx: None,
             thread_handle: None,
             running: false,
@@ -40,6 +43,9 @@ impl DummyDevice {
 }
 
 impl AudioDevice for DummyDevice {
+    fn format(&self) -> AudioFormat {
+        self.format
+    }
     fn start(&mut self, mut callback: Box<dyn AudioCallback>) -> Result<(), AudioError> {
         if self.running {
             return Ok(());

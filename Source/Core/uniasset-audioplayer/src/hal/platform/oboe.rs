@@ -8,6 +8,9 @@ use crate::hal::AudioCallback;
 use crate::hal::AudioDevice;
 use crate::types::AudioFormat;
 
+/// Default format fallback: 48 kHz stereo.
+const DEFAULT_FORMAT: AudioFormat = AudioFormat::new(48000, 2);
+
 /// An audio output device backed by Oboe (AAudio).
 pub struct OboeDevice {
     format: AudioFormat,
@@ -20,15 +23,15 @@ pub struct OboeDevice {
 unsafe impl Send for OboeDevice {}
 
 impl OboeDevice {
-    /// Create a new Oboe output device for the requested format.
-    pub fn new(format: AudioFormat) -> Result<Self, AudioError> {
-        // TODO: Create an oboe::AudioStreamBuilder, set direction to Output,
-        // set performance mode to LowLatency, set sharing mode to Shared,
-        // set format to Float, set sample rate and channel count, set the
-        // data callback, and open the stream.
-
+    /// Create a new Oboe output device.
+    ///
+    /// TODO: Query the device's native sample rate and channel count
+    /// via `AudioManager::getProperty` or similar AAudio API.
+    pub fn new() -> Result<Self, AudioError> {
+        // TODO: Create an oboe::AudioStreamBuilder, query device capabilities,
+        // set format to Float, and open the stream.
         Ok(Self {
-            format,
+            format: DEFAULT_FORMAT,
             stream: None,
             running: false,
         })
@@ -36,6 +39,9 @@ impl OboeDevice {
 }
 
 impl AudioDevice for OboeDevice {
+    fn format(&self) -> AudioFormat {
+        self.format
+    }
     fn start(&mut self, _callback: Box<dyn AudioCallback>) -> Result<(), AudioError> {
         // TODO: Set the data callback wrapping `callback.pull()`, then call
         // `stream.requestStart()`.

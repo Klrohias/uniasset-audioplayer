@@ -4,7 +4,6 @@
 
 use crate::error::AudioError;
 use crate::hal::AudioDevice;
-use crate::types::AudioFormat;
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod coreaudio;
@@ -37,20 +36,21 @@ mod dummy;
 pub use dummy::DummyDevice;
 
 /// Create a platform-appropriate audio device.
-pub(crate) fn create_device(format: AudioFormat) -> Result<Box<dyn AudioDevice>, AudioError> {
+/// The device auto-detects the hardware's native format.
+pub(crate) fn create_device() -> Result<Box<dyn AudioDevice>, AudioError> {
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     {
-        CoreAudioDevice::new(format).map(|d| Box::new(d) as Box<dyn AudioDevice>)
+        CoreAudioDevice::new().map(|d| Box::new(d) as Box<dyn AudioDevice>)
     }
 
     #[cfg(target_os = "windows")]
     {
-        WasapiDevice::new(format).map(|d| Box::new(d) as Box<dyn AudioDevice>)
+        WasapiDevice::new().map(|d| Box::new(d) as Box<dyn AudioDevice>)
     }
 
     #[cfg(target_os = "android")]
     {
-        OboeDevice::new(format).map(|d| Box::new(d) as Box<dyn AudioDevice>)
+        OboeDevice::new().map(|d| Box::new(d) as Box<dyn AudioDevice>)
     }
 
     #[cfg(not(any(
@@ -60,6 +60,6 @@ pub(crate) fn create_device(format: AudioFormat) -> Result<Box<dyn AudioDevice>,
         target_os = "android"
     )))]
     {
-        Ok(Box::new(DummyDevice::new(format)))
+        Ok(Box::new(DummyDevice::new()))
     }
 }

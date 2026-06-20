@@ -13,6 +13,9 @@ use crate::hal::AudioCallback;
 use crate::hal::AudioDevice;
 use crate::types::AudioFormat;
 
+/// Default format fallback: 48 kHz stereo.
+const DEFAULT_FORMAT: AudioFormat = AudioFormat::new(48000, 2);
+
 /// An audio output device backed by WASAPI (`IAudioClient`).
 pub struct WasapiDevice {
     format: AudioFormat,
@@ -27,14 +30,13 @@ pub struct WasapiDevice {
 unsafe impl Send for WasapiDevice {}
 
 impl WasapiDevice {
-    /// Create a new WASAPI output device for the requested format.
-    pub fn new(format: AudioFormat) -> Result<Self, AudioError> {
-        // TODO: Initialize COM (`CoInitializeEx`), create `IMMDeviceEnumerator`,
-        // get the default audio render endpoint, activate `IAudioClient` in
-        // shared mode, query buffer size, and create the event handle.
-
+    /// Create a new WASAPI output device.
+    ///
+    /// TODO: Initialize COM, activate `IAudioClient`, query `GetMixFormat`
+    /// for the hardware-native format.
+    pub fn new() -> Result<Self, AudioError> {
         Ok(Self {
-            format,
+            format: DEFAULT_FORMAT,
             stop_tx: None,
             thread_handle: None,
             running: false,
@@ -43,6 +45,9 @@ impl WasapiDevice {
 }
 
 impl AudioDevice for WasapiDevice {
+    fn format(&self) -> AudioFormat {
+        self.format
+    }
     fn start(&mut self, callback: Box<dyn AudioCallback>) -> Result<(), AudioError> {
         if self.running {
             return Ok(());
