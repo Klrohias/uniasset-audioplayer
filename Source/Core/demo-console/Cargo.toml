@@ -8,3 +8,5 @@ name = "demo-console"
 
 [dependencies]
 uniasset-audioplayer = { path = "../uniasset-audioplayer" }
+uniasset = { path = "../../../../uniasset/Source/Core/uniasset" }
+parking_lot = "0.12"

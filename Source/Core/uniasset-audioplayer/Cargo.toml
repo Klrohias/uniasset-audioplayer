@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "uniasset"
+name = "uniasset_audioplayer"
 
 [dependencies]
 # Lock-free SPSC queue for real-time safe command passing between

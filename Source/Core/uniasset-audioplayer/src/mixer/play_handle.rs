@@ -105,6 +105,20 @@ impl PlayHandle {
         self.state.alive.load(Ordering::Relaxed)
     }
 
+    /// Stop playback and mark this stream for removal from the mixer.
+    ///
+    /// Sets the EOF flag so that the next call to
+    /// [`Mixer::cleanup_eof`](crate::mixer::Mixer::cleanup_eof) (or
+    /// [`AudioPlayer::cleanup_eof`](crate::player::AudioPlayer::cleanup_eof))
+    /// will remove this stream from the mixer's snapshot.
+    ///
+    /// If the stream has already been removed from the mixer, this is a no-op.
+    pub fn stop(&self) {
+        if self.state.alive.load(Ordering::Relaxed) {
+            self.state.eof.store(true, Ordering::Release);
+        }
+    }
+
     /// Set the volume for this stream.
     ///
     /// Values are clamped to `[0.0, 1.0]`. The volume is applied on the
