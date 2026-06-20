@@ -1,0 +1,87 @@
+name: 'Build Uniasset AudioPlayer (Android)'
+
+on:
+  workflow_dispatch: {}
+  workflow_call: {}
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Setup Rust
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        toolchain: nightly
+        target: armv7-linux-androideabi,aarch64-linux-android,i686-linux-android,x86_64-linux-android
+        components: rust-src
+
+    - name: Setup Android NDK
+      uses: android-actions/setup-android@v3
+
+    - name: Install cargo-ndk
+      run: |
+        cargo install cargo-ndk --locked
+
+    - name: Build (Android armeabi-v7a)
+      if: '!cancelled()'
+      run: |
+        pushd Source/Core
+        cargo ndk -t armeabi-v7a -o target/android-build build -p uniasset-audioplayer-bridge --manifest-path Cargo.toml --release
+        popd
+
+    - name: Build (Android arm64-v8a)
+      if: '!cancelled()'
+      run: |
+        pushd Source/Core
+        cargo ndk -t arm64-v8a -o target/android-build build -p uniasset-audioplayer-bridge --manifest-path Cargo.toml --release
+        popd
+
+    - name: Build (Android x86)
+      if: '!cancelled()'
+      run: |
+        pushd Source/Core
+        cargo ndk -t x86 -o target/android-build build -p uniasset-audioplayer-bridge --manifest-path Cargo.toml --release
+        popd
+
+    - name: Build (Android x86_64)
+      if: '!cancelled()'
+      run: |
+        pushd Source/Core
+        cargo ndk -t x86_64 -o target/android-build build -p uniasset-audioplayer-bridge --manifest-path Cargo.toml --release
+        popd
+
+    - name: List Android build outputs
+      if: '!cancelled()'
+      run: |
+        ls -R "${{github.workspace}}/Source/Core/target/android-build" || true
+        ls -R "${{github.workspace}}/Source/Core/target" || true
+
+    - name: Upload Artifact (arm-android)
+      if: '!cancelled()'
+      uses: actions/upload-artifact@v7
+      with:
+        name: libuniasset_audioplayer-arm-neon-android
+        path: ${{github.workspace}}/Source/Core/target/android-build/armeabi-v7a/libuniasset_audioplayer.so
+
+    - name: Upload Artifact (aarch64-android)
+      if: '!cancelled()'
+      uses: actions/upload-artifact@v7
+      with:
+        name: libuniasset_audioplayer-aarch64-android
+        path: ${{github.workspace}}/Source/Core/target/android-build/arm64-v8a/libuniasset_audioplayer.so
+
+    - name: Upload Artifact (x86-android)
+      if: '!cancelled()'
+      uses: actions/upload-artifact@v7
+      with:
+        name: libuniasset_audioplayer-x86-android
+        path: ${{github.workspace}}/Source/Core/target/android-build/x86/libuniasset_audioplayer.so
+
+    - name: Upload Artifact (x64-android)
+      if: '!cancelled()'
+      uses: actions/upload-artifact@v7
+      with:
+        name: libuniasset_audioplayer-x64-android
+        path: ${{github.workspace}}/Source/Core/target/android-build/x86_64/libuniasset_audioplayer.so

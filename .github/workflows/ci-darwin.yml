@@ -1,0 +1,57 @@
+name: 'Build Uniasset AudioPlayer (Darwin)'
+
+on:
+  workflow_dispatch: {}
+  workflow_call: {}
+
+jobs:
+  build-darwin:
+    runs-on: macos-latest
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Setup Rust
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        toolchain: nightly
+        target: x86_64-apple-darwin,aarch64-apple-darwin,aarch64-apple-ios
+        components: rust-src
+
+    - name: Build macOS (x86_64-apple-darwin)
+      if: '!cancelled()'
+      run: |
+        cargo build -p uniasset-audioplayer-bridge --manifest-path Source/Core/Cargo.toml --release --target x86_64-apple-darwin -Z build-std=std,panic_abort
+
+    - name: Build macOS (aarch64-apple-darwin)
+      if: '!cancelled()'
+      run: |
+        cargo build -p uniasset-audioplayer-bridge --manifest-path Source/Core/Cargo.toml --release --target aarch64-apple-darwin -Z build-std=std,panic_abort
+
+    - name: Build iOS (aarch64-apple-ios)
+      if: '!cancelled()'
+      run: |
+        # iOS does not support dylib outputs; build staticlib only.
+        export IPHONEOS_DEPLOYMENT_TARGET=10.0
+        cargo rustc -p uniasset-audioplayer-bridge --manifest-path Source/Core/Cargo.toml --release --target aarch64-apple-ios -Z build-std=std,panic_abort -- --crate-type staticlib
+
+    - name: Upload Artifact (x64-macos)
+      uses: actions/upload-artifact@v7
+      if: '!cancelled()'
+      with:
+        name: libuniasset_audioplayer-x64-macos
+        path: ${{github.workspace}}/Source/Core/target/x86_64-apple-darwin/release/libuniasset_audioplayer.dylib
+
+    - name: Upload Artifact (aarch64-macos)
+      uses: actions/upload-artifact@v7
+      if: '!cancelled()'
+      with:
+        name: libuniasset_audioplayer-aarch64-macos
+        path: ${{github.workspace}}/Source/Core/target/aarch64-apple-darwin/release/libuniasset_audioplayer.dylib
+
+    - name: Upload Artifact (aarch64-ios)
+      uses: actions/upload-artifact@v7
+      if: '!cancelled()'
+      with:
+        name: libuniasset_audioplayer-aarch64-ios
+        path: ${{github.workspace}}/Source/Core/target/aarch64-apple-ios/release/libuniasset_audioplayer.a
