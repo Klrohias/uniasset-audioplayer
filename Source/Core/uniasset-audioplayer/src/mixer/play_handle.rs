@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 
@@ -162,8 +162,6 @@ impl PlayHandle {
     /// old modifiers are freed when their `Arc` refcount hits zero
     /// (all audio callbacks have moved past them).
     pub fn set_modifier(&self, modifier: Option<ModifierFn>) {
-        self.state
-            .modifier
-            .store(Arc::new(modifier));
+        self.state.modifier.store(Arc::new(modifier));
     }
 }

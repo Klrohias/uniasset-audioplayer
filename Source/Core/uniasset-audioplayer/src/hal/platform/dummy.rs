@@ -56,8 +56,7 @@ impl AudioDevice for DummyDevice {
         let interval = Duration::from_millis(PULL_INTERVAL_MS);
 
         // Compute how many frames to pull per tick to match the sample rate.
-        let frames_per_tick =
-            (format.sample_rate as u64 * PULL_INTERVAL_MS / 1000) as usize;
+        let frames_per_tick = (format.sample_rate as u64 * PULL_INTERVAL_MS / 1000) as usize;
         let samples_per_tick = frames_per_tick * format.channels as usize;
 
         let handle = thread::Builder::new()

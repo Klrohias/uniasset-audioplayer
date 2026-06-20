@@ -16,10 +16,7 @@ use windows::Win32::Media::Audio::{
     eConsole, eRender, IAudioClient, IAudioRenderClient, IMMDeviceEnumerator, MMDeviceEnumerator,
     AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, WAVEFORMATEX,
 };
-use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_ALL,
-    COINIT_MULTITHREADED,
-};
+use windows::Win32::System::Com::{CoCreateInstance, CoTaskMemFree, CLSCTX_ALL};
 use windows::Win32::System::Threading::{
     AvRevertMmThreadCharacteristics, AvSetMmThreadCharacteristicsW, CreateEventW,
     WaitForSingleObject,
@@ -29,6 +26,8 @@ use crate::error::AudioError;
 use crate::hal::AudioCallback;
 use crate::hal::AudioDevice;
 use crate::types::AudioFormat;
+
+use super::ensure_com_initialized;
 
 /// Default format fallback: 48 kHz stereo.
 const DEFAULT_FORMAT: AudioFormat = AudioFormat::new(48000, 2);
@@ -81,6 +80,9 @@ impl WasapiDevice {
     /// Queries the default audio endpoint, activates `IAudioClient`
     /// in shared event-driven mode, and reads the hardware format.
     pub fn new() -> Result<Self, AudioError> {
+        // COM must be initialised on the calling thread before any WASAPI calls.
+        ensure_com_initialized();
+
         // Create device enumerator.
         let enumerator: IMMDeviceEnumerator = unsafe {
             CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
@@ -109,7 +111,9 @@ impl WasapiDevice {
         };
 
         if mix_format_ptr.is_null() {
-            return Err(AudioError::BackendError("GetMixFormat returned null".into()));
+            return Err(AudioError::BackendError(
+                "GetMixFormat returned null".into(),
+            ));
         }
 
         let format = unsafe { read_mix_format(mix_format_ptr) };
@@ -148,9 +152,7 @@ impl WasapiDevice {
             CoTaskMemFree(Some(mix_format_ptr as *mut _));
         }
 
-        result.map_err(|e| {
-            AudioError::BackendError(format!("IAudioClient::Initialize: {e}"))
-        })?;
+        result.map_err(|e| AudioError::BackendError(format!("IAudioClient::Initialize: {e}")))?;
 
         // Read actual buffer size (in frames).
         let buffer_frame_count = unsafe {
@@ -202,6 +204,10 @@ impl AudioDevice for WasapiDevice {
             return Err(AudioError::DeviceBusy);
         }
 
+        // COM may not be initialised yet if this is called from a different
+        // thread than `new()`.
+        ensure_com_initialized();
+
         let audio_client = self
             .audio_client
             .as_ref()
@@ -224,11 +230,9 @@ impl AudioDevice for WasapiDevice {
 
         // Obtain the render client for filling buffers.
         let render_client: IAudioRenderClient = unsafe {
-            audio_client
-                .GetService()
-                .map_err(|e| {
-                    AudioError::BackendError(format!("GetService(IAudioRenderClient): {e}"))
-                })?
+            audio_client.GetService().map_err(|e| {
+                AudioError::BackendError(format!("GetService(IAudioRenderClient): {e}"))
+            })?
         };
 
         let buffer_frame_count = self.buffer_frame_count;
@@ -290,6 +294,8 @@ impl AudioDevice for WasapiDevice {
     }
 
     fn stop(&mut self) -> Result<(), AudioError> {
+        ensure_com_initialized();
+
         // 1. Signal the audio thread to exit.
         if let Some(tx) = self.stop_tx.take() {
             let _ = tx.send(());
@@ -311,14 +317,14 @@ impl AudioDevice for WasapiDevice {
     }
 
     fn pause(&mut self) -> Result<(), AudioError> {
+        ensure_com_initialized();
+
         if let Some(client) = self.audio_client.as_ref() {
             if self.running {
                 unsafe {
-                    client
-                        .Stop()
-                        .map_err(|e| {
-                            AudioError::BackendError(format!("IAudioClient::Stop: {e}"))
-                        })?;
+                    client.Stop().map_err(|e| {
+                        AudioError::BackendError(format!("IAudioClient::Stop: {e}"))
+                    })?;
                 }
             }
         }
@@ -326,14 +332,14 @@ impl AudioDevice for WasapiDevice {
     }
 
     fn resume(&mut self) -> Result<(), AudioError> {
+        ensure_com_initialized();
+
         if let Some(client) = self.audio_client.as_ref() {
             if self.running {
                 unsafe {
-                    client
-                        .Start()
-                        .map_err(|e| {
-                            AudioError::BackendError(format!("IAudioClient::Start: {e}"))
-                        })?;
+                    client.Start().map_err(|e| {
+                        AudioError::BackendError(format!("IAudioClient::Start: {e}"))
+                    })?;
                 }
             }
         }
@@ -343,6 +349,10 @@ impl AudioDevice for WasapiDevice {
 
 impl Drop for WasapiDevice {
     fn drop(&mut self) {
+        // COM must be initialised so the audio_client Release() call succeeds,
+        // even if the device was moved to a different thread since creation.
+        ensure_com_initialized();
+
         let _ = self.stop();
         // Release the audio client last so COM objects are dropped in order.
         self.audio_client = None;
@@ -370,17 +380,14 @@ fn wasapi_thread(
     // COM is required on every thread that uses WASAPI objects.
     // If COM init fails (e.g. wrong threading model already set on this
     // thread), we cannot safely use WASAPI — exit immediately.
-    let hr = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
-    if hr.is_err() {
-        return;
-    }
+    ensure_com_initialized();
 
     // Register this thread with MMCSS for elevated audio priority.
     // Without this, the thread runs at normal priority and is prone to
     // buffer underruns under CPU load.
-    let mmcss_handle = unsafe {
-        AvSetMmThreadCharacteristicsW(&HSTRING::from("Audio"), std::ptr::null_mut())
-    };
+    let mut task_index: u32 = 0;
+    let mmcss_handle =
+        unsafe { AvSetMmThreadCharacteristicsW(&HSTRING::from("Audio"), &mut task_index) };
 
     let render = &render_client.0;
     let event = event_handle.0;
@@ -436,17 +443,17 @@ fn wasapi_thread(
         }
     }
 
-    // ── Drop COM objects *before* CoUninitialize ──────────────────────
-    // COM contract: all interface references must be released while COM
-    // is still initialised on this thread.
+    // ── Drop COM objects before thread cleanup ──────────────────────
+    // COM contract: all interface references must be released before
+    // CoUninitialize. Local drops here happen before the thread-local
+    // ComGuard destructor runs, so the order is correct.
     drop(render_client); // → IAudioRenderClient::Release()
-    drop(event_handle);  // → CloseHandle (not COM, but close before teardown)
-    drop(callback);      // → Box<dyn AudioCallback> (not COM)
-    drop(stop_rx);       // → mpsc::Receiver (not COM)
+    drop(event_handle); // → CloseHandle (not COM, but close before teardown)
+    drop(callback); // → Box<dyn AudioCallback> (not COM)
+    drop(stop_rx); // → mpsc::Receiver (not COM)
 
-    unsafe {
-        CoUninitialize();
-    }
+    // ComGuard::drop() calls CoUninitialize when the thread-local
+    // destructor runs after this function returns.
 }
 
 /// Fill one WASAPI buffer with PCM data from the callback.
