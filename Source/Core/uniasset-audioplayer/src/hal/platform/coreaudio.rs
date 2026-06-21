@@ -99,6 +99,11 @@ extern "C" fn render_callback(
     // Pull samples — zero locks, &self access.
     let frames_written = cb.pull(output);
 
+    // Clamp to the actual frame count to guard against a buggy / malicious
+    // callback returning more frames than the buffer can hold (prevents both
+    // an out-of-bounds slice panic and a usize overflow below).
+    let frames_written = frames_written.min(frame_count);
+
     // If the callback returned fewer frames, zero-fill the remainder.
     let written_samples = frames_written * channel_count;
     if written_samples < sample_count {
