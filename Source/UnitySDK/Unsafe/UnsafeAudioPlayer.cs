@@ -63,6 +63,15 @@ namespace Uniasset.AudioPlayer.Unsafe
         }
 
         /// <summary>
+        /// Add an audio stream by reference. The struct address is taken internally
+        /// so the caller does not need an unsafe context.
+        /// </summary>
+        public unsafe UnsafePlayHandle AddStream(ref NativeAudioStream stream)
+        {
+            return AddStream(&stream);
+        }
+
+        /// <summary>
         /// Remove all streams that have reached EOF. Call periodically to free resources.
         /// </summary>
         public void CleanupEof()

@@ -24,7 +24,7 @@ namespace Uniasset.AudioPlayer.Unsafe
 
             const int maxLen = 512;
             var buffer = stackalloc sbyte[maxLen];
-            var len = Interop.UAP_GetError(buffer, (uint)maxLen);
+            var len = Interop.UAP_GetError(buffer, maxLen);
 
             if (len == 0)
                 return;

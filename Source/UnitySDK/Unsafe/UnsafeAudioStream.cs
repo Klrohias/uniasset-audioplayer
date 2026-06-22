@@ -107,6 +107,18 @@ namespace Uniasset.AudioPlayer.Unsafe
             };
         }
 
+        /// <summary>
+        /// Create a <see cref="StreamBinding"/> that owns the GCHandle for
+        /// <paramref name="stream"/> and the corresponding native stream struct.
+        /// The caller must call <see cref="StreamBinding.Free"/> to release the GCHandle.
+        /// </summary>
+        public static StreamBinding CreateBinding(IAudioStream stream)
+        {
+            var gcHandle = GCHandle.Alloc(stream);
+            var nativeStream = CreateStream(GCHandle.ToIntPtr(gcHandle));
+            return new StreamBinding(nativeStream, gcHandle);
+        }
+
         // ==================================================================
         // Callback implementations
         // ==================================================================
@@ -203,6 +215,31 @@ namespace Uniasset.AudioPlayer.Unsafe
             {
                 return 44100;
             }
+        }
+    }
+
+    /// <summary>
+    /// Binds a managed <see cref="IAudioStream"/> to its native representation.
+    /// Owns the <see cref="GCHandle"/> that keeps the stream alive for native callbacks.
+    /// Call <see cref="Free"/> to release.
+    /// </summary>
+    public struct StreamBinding
+    {
+        /// <summary>The native stream struct to pass to <c>UAP_AudioPlayer_AddStream</c>.</summary>
+        public NativeAudioStream NativeStream;
+        private GCHandle _gcHandle;
+
+        internal StreamBinding(NativeAudioStream nativeStream, GCHandle gcHandle)
+        {
+            NativeStream = nativeStream;
+            _gcHandle = gcHandle;
+        }
+
+        /// <summary>Release the GCHandle that pins the managed stream.</summary>
+        public void Free()
+        {
+            if (_gcHandle.IsAllocated)
+                _gcHandle.Free();
         }
     }
 }

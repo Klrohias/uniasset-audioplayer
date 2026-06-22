@@ -1,7 +1,5 @@
 using System;
-using System.Runtime.InteropServices;
 using System.Threading;
-using AOT;
 using Uniasset.AudioPlayer.Unsafe;
 
 namespace Uniasset.AudioPlayer
@@ -11,52 +9,13 @@ namespace Uniasset.AudioPlayer
     /// Provides pause/resume, volume control, seeking, and DSP modifier installation.
     /// Must be disposed to release native resources.
     /// </summary>
-    public sealed unsafe class PlayHandle : IDisposable
+    public sealed class PlayHandle : IDisposable
     {
         private int _disposedFlag;
-        private GCHandle _streamGcHandle;
-        private GCHandle _modifierGcHandle;
+        private StreamBinding _streamBinding;
+        private ModifierBinding? _modifierBinding;
 
         internal UnsafePlayHandle UnsafeHandle { get; private set; }
-
-        // ==================================================================
-        // Modifier callback bridge (static — one delegate shared by all handles)
-        // ==================================================================
-
-        /// <summary>C callback signature for the pre-mix modifier.</summary>
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        private delegate void NativeModifierFn(float* buffer, ulong sampleCount, void* userData);
-
-        private static readonly NativeModifierFn s_modifierDelegate = ModifierBridge;
-        private static readonly void* s_modifierPtr;
-
-        static PlayHandle()
-        {
-            s_modifierPtr = Marshal.GetFunctionPointerForDelegate(s_modifierDelegate).ToPointer();
-        }
-
-        /// <summary>
-        /// Audio-thread modifier bridge. Recovers the managed <see cref="ModifierCallback"/>
-        /// from the GCHandle and invokes it with a <see cref="Span{T}"/> over the native buffer.
-        /// </summary>
-        [MonoPInvokeCallback(typeof(NativeModifierFn))]
-        private static unsafe void ModifierBridge(float* buffer, ulong sampleCount, void* userData)
-        {
-            try
-            {
-                var handle = GCHandle.FromIntPtr(new IntPtr(userData));
-                var callback = (ModifierCallback)handle.Target;
-                if (callback == null)
-                    return;
-
-                var span = new Span<float>(buffer, checked((int)sampleCount));
-                callback(span);
-            }
-            catch
-            {
-                // Audio thread must never crash.
-            }
-        }
 
         // ==================================================================
         // Construction
@@ -64,10 +23,10 @@ namespace Uniasset.AudioPlayer
 
         internal PlayHandle(
             UnsafePlayHandle unsafeHandle,
-            GCHandle streamGcHandle)
+            StreamBinding streamBinding)
         {
             UnsafeHandle = unsafeHandle;
-            _streamGcHandle = streamGcHandle;
+            _streamBinding = streamBinding;
         }
 
         // ==================================================================
@@ -126,39 +85,20 @@ namespace Uniasset.AudioPlayer
         /// </param>
         /// <returns>True on success.</returns>
         /// <exception cref="NativeException">Thrown if the native call fails.</exception>
-        public bool SetModifier(ModifierCallback callback)
+        public bool SetModifier(ModifierCallback? callback)
         {
             // Remove existing modifier first — unregister from native side
             // before freeing the GCHandle, so the audio thread stops using it.
-            if (_modifierGcHandle.IsAllocated)
+            if (_modifierBinding.HasValue)
             {
                 UnsafeHandle.SetModifier(null, null);
-                _modifierGcHandle.Free();
+                _modifierBinding.Value.Free();
+                _modifierBinding = null;
             }
 
-            if (callback == null)
-                return UnsafeHandle.SetModifier(null, null);
-
-            var gcHandle = GCHandle.Alloc(callback);
-            try
-            {
-                var userData = GCHandle.ToIntPtr(gcHandle).ToPointer();
-                var result = UnsafeHandle.SetModifier(s_modifierPtr, userData);
-                if (result)
-                {
-                    _modifierGcHandle = gcHandle;
-                }
-                else
-                {
-                    gcHandle.Free();
-                }
-                return result;
-            }
-            catch
-            {
-                gcHandle.Free();
-                throw;
-            }
+            var binding = ModifierBridge.Install(UnsafeHandle, callback);
+            _modifierBinding = binding;
+            return binding != null;
         }
 
         // ==================================================================
@@ -176,10 +116,11 @@ namespace Uniasset.AudioPlayer
 
             // Remove modifier first — audio thread must stop using the GCHandle
             // before we free it.
-            if (_modifierGcHandle.IsAllocated)
+            if (_modifierBinding.HasValue)
             {
                 UnsafeHandle.SetModifier(null, null);
-                _modifierGcHandle.Free();
+                _modifierBinding.Value.Free();
+                _modifierBinding = null;
             }
 
             // Signal EOF to the native side so the mixer stops calling our callbacks.
@@ -191,8 +132,7 @@ namespace Uniasset.AudioPlayer
 
             // Free the stream GCHandle. The callback try/catch handles the edge
             // case where the audio thread is mid-callback (Target returns null).
-            if (_streamGcHandle.IsAllocated)
-                _streamGcHandle.Free();
+            _streamBinding.Free();
 
             GC.SuppressFinalize(this);
         }

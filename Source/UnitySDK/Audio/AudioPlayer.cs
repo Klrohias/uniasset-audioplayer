@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Runtime.InteropServices;
 using System.Threading;
 using Uniasset.AudioPlayer.Unsafe;
 using UnityEngine;
@@ -33,7 +32,7 @@ namespace Uniasset.AudioPlayer
         /// <summary>
         /// The raw unsafe handle. Exposed for advanced use cases.
         /// </summary>
-        public UnsafeAudioPlayer UnsafeHandle { get; }
+        private UnsafeAudioPlayer UnsafeHandle { get; }
 
         /// <summary>
         /// Create a new AudioPlayer, opening the default platform audio device
@@ -78,19 +77,18 @@ namespace Uniasset.AudioPlayer
         /// <exception cref="ArgumentNullException">Thrown if <paramref name="stream"/> is null.</exception>
         /// <exception cref="ObjectDisposedException">Thrown if the player has been disposed.</exception>
         /// <exception cref="NativeException">Thrown if the native stream creation fails.</exception>
-        public unsafe PlayHandle Play(IAudioStream stream)
+        public PlayHandle Play(IAudioStream stream)
         {
             ThrowIfDisposed();
             if (stream == null)
                 throw new ArgumentNullException(nameof(stream));
 
-            var gcHandle = GCHandle.Alloc(stream);
+            var binding = AudioStreamFactory.CreateBinding(stream);
             try
             {
-                var nativeStream = AudioStreamFactory.CreateStream(GCHandle.ToIntPtr(gcHandle));
-                var playHandlePtr = UnsafeHandle.AddStream(&nativeStream);
+                var playHandlePtr = UnsafeHandle.AddStream(ref binding.NativeStream);
 
-                var playHandle = new PlayHandle(playHandlePtr, gcHandle);
+                var playHandle = new PlayHandle(playHandlePtr, binding);
 
                 lock (_lock)
                 {
@@ -101,7 +99,7 @@ namespace Uniasset.AudioPlayer
             }
             catch
             {
-                gcHandle.Free();
+                binding.Free();
                 throw;
             }
         }
