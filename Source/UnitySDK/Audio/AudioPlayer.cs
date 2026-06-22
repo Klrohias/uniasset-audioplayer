@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Uniasset.AudioPlayer.Unsafe;
+using UnityEngine;
 
 namespace Uniasset.AudioPlayer
 {
@@ -77,7 +78,7 @@ namespace Uniasset.AudioPlayer
         /// <exception cref="ArgumentNullException">Thrown if <paramref name="stream"/> is null.</exception>
         /// <exception cref="ObjectDisposedException">Thrown if the player has been disposed.</exception>
         /// <exception cref="NativeException">Thrown if the native stream creation fails.</exception>
-        public PlayHandle Play(IAudioStream stream)
+        public unsafe PlayHandle Play(IAudioStream stream)
         {
             ThrowIfDisposed();
             if (stream == null)
@@ -86,10 +87,10 @@ namespace Uniasset.AudioPlayer
             var gcHandle = GCHandle.Alloc(stream);
             try
             {
-                var unsafeStream = UnsafeAudioStream.Create(GCHandle.ToIntPtr(gcHandle));
-                var playHandlePtr = UnsafeHandle.AddStream(unsafeStream);
+                var nativeStream = AudioStreamFactory.CreateStream(GCHandle.ToIntPtr(gcHandle));
+                var playHandlePtr = UnsafeHandle.AddStream(&nativeStream);
 
-                var playHandle = new PlayHandle(playHandlePtr, gcHandle, unsafeStream);
+                var playHandle = new PlayHandle(playHandlePtr, gcHandle);
 
                 lock (_lock)
                 {
@@ -103,6 +104,21 @@ namespace Uniasset.AudioPlayer
                 gcHandle.Free();
                 throw;
             }
+        }
+
+        /// <summary>
+        /// Add an <see cref="UnityEngine.AudioClip"/> to the player and start playback.
+        /// The clip is wrapped in an <see cref="AudioClipStream"/> internally.
+        /// </summary>
+        /// <param name="clip">The AudioClip to play.</param>
+        /// <returns>A <see cref="PlayHandle"/> for controlling playback.</returns>
+        /// <exception cref="ArgumentNullException">Thrown if <paramref name="clip"/> is null.</exception>
+        /// <exception cref="ArgumentException">Thrown if the clip has zero channels or zero samples.</exception>
+        /// <exception cref="ObjectDisposedException">Thrown if the player has been disposed.</exception>
+        public PlayHandle Play(AudioClip clip)
+        {
+            var stream = new AudioClipStream(clip);
+            return Play(stream);
         }
 
         /// <summary>

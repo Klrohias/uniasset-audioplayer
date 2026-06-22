@@ -16,7 +16,6 @@ namespace Uniasset.AudioPlayer
         private int _disposedFlag;
         private GCHandle _streamGcHandle;
         private GCHandle _modifierGcHandle;
-        private readonly UnsafeAudioStream _streamHandle;
 
         internal UnsafePlayHandle UnsafeHandle { get; private set; }
 
@@ -65,12 +64,10 @@ namespace Uniasset.AudioPlayer
 
         internal PlayHandle(
             UnsafePlayHandle unsafeHandle,
-            GCHandle streamGcHandle,
-            UnsafeAudioStream streamHandle)
+            GCHandle streamGcHandle)
         {
             UnsafeHandle = unsafeHandle;
             _streamGcHandle = streamGcHandle;
-            _streamHandle = streamHandle;
         }
 
         // ==================================================================
@@ -188,10 +185,9 @@ namespace Uniasset.AudioPlayer
             // Signal EOF to the native side so the mixer stops calling our callbacks.
             UnsafeHandle.Stop();
 
-            // Drop our C references. The mixer retains internal Arc refs until
+            // Drop our C reference. The mixer retains internal Arc refs until
             // CleanupEof is called on the player.
             UnsafeHandle.Destroy();
-            _streamHandle.Destroy();
 
             // Free the stream GCHandle. The callback try/catch handles the edge
             // case where the audio thread is mid-callback (Target returns null).

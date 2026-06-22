@@ -58,14 +58,16 @@ namespace Uniasset.AudioPlayer.Unsafe
             [NativeTypeName("uint16_t *")] ushort* out_channels);
 
         // ==================================================================
-        // Stream Management (3 functions)
+        // Stream Management (2 functions)
         // ==================================================================
 
         /// <summary>
-        /// Add an audio stream to the player. Returns a PlayHandle, or null on error.
+        /// Add an audio stream to the player. `stream` must point to a valid
+        /// `NativeAudioStream` struct that the caller keeps alive.
+        /// Returns a PlayHandle, or null on error.
         /// </summary>
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        public static extern void* UAP_AudioPlayer_AddStream(void* handle, void* stream_handle);
+        public static extern void* UAP_AudioPlayer_AddStream(void* handle, void* stream);
 
         /// <summary>
         /// Remove all streams that have reached EOF. Call periodically to free resources.
@@ -98,31 +100,6 @@ namespace Uniasset.AudioPlayer.Unsafe
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         [return: NativeTypeName("bool")]
         public static extern byte UAP_AudioPlayer_Stop(void* handle);
-
-        // ==================================================================
-        // AudioStream (2 functions)
-        // ==================================================================
-
-        /// <summary>
-        /// Create a new audio stream backed by C callbacks.
-        /// All five callbacks must be non-null. Returns null on error.
-        /// </summary>
-        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        public static extern void* UAP_AudioStream_Create(
-            void* user_data,
-            void* read_fn,
-            void* seek_fn,
-            void* is_eof_fn,
-            void* channels_fn,
-            void* sample_rate_fn);
-
-        /// <summary>
-        /// Destroy an audio stream handle. Drops the C caller's reference.
-        /// The stream remains alive as long as any PlayHandle references exist.
-        /// No-op on null handle.
-        /// </summary>
-        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        public static extern void UAP_AudioStream_Destroy(void* handle);
 
         // ==================================================================
         // PlayHandle (9 functions)

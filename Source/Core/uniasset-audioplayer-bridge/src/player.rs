@@ -98,14 +98,16 @@ pub unsafe extern "C" fn UAP_AudioPlayer_Format(
 
 /// Add an audio stream to the player.
 ///
-/// `stream_handle` must be a handle from [`UAP_AudioStream_Create`].
-/// Returns a new [`UAP_PlayHandle`] that controls this stream's playback.
+/// `stream` must point to a valid `#[repr(C)] NativeAudioStream` that the
+/// caller will keep alive for the duration of playback. The Rust side stores
+/// a copy of the struct.
 ///
+/// Returns a new [`UAP_PlayHandle`] that controls this stream's playback.
 /// Returns null on error — check `UAP_HasError` / `UAP_GetError`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn UAP_AudioPlayer_AddStream(
     handle: NativeHandle,
-    stream_handle: NativeHandle,
+    stream: *const NativeAudioStream,
 ) -> NativeHandle {
     clear_error();
 
@@ -117,17 +119,16 @@ pub unsafe extern "C" fn UAP_AudioPlayer_AddStream(
         }
     };
 
-    if stream_handle.is_null() {
-        set_error("null audio stream handle");
+    if stream.is_null() {
+        set_error("null audio stream pointer");
         return std::ptr::null();
     }
 
-    // Clone the inner Arc<NativeAudioStream> and coerce to Arc<dyn AudioStream>.
-    let stream_arc: &Arc<NativeAudioStream> =
-        unsafe { Arc::<NativeAudioStream>::from_handle(stream_handle) };
-    let trait_obj: Arc<dyn AudioStream> = stream_arc.clone();
+    // Copy the caller's struct — we own this copy now.
+    let stream: NativeAudioStream = unsafe { std::ptr::read(stream) };
 
-    // add_stream returns a PlayHandle — wrap it in a new handle for the C side.
+    let trait_obj: Arc<dyn AudioStream> = Arc::new(stream);
+
     let play_handle = player.add_stream(trait_obj);
     Arc::new(play_handle).into_handle()
 }

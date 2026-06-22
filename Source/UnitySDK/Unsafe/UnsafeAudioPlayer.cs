@@ -1,7 +1,5 @@
 using System;
 using System.ComponentModel;
-using System.Runtime.InteropServices;
-using AOT;
 
 namespace Uniasset.AudioPlayer.Unsafe
 {
@@ -50,12 +48,14 @@ namespace Uniasset.AudioPlayer.Unsafe
         }
 
         /// <summary>
-        /// Add an audio stream to the player. Returns a <see cref="UnsafePlayHandle"/>.
+        /// Add an audio stream to the player. <paramref name="stream"/> must point
+        /// to a valid <see cref="NativeAudioStream"/> that the caller keeps alive.
+        /// Returns a <see cref="UnsafePlayHandle"/>.
         /// Throws <see cref="NativeException"/> on failure.
         /// </summary>
-        public UnsafePlayHandle AddStream(UnsafeAudioStream stream)
+        public UnsafePlayHandle AddStream(NativeAudioStream* stream)
         {
-            var result = Interop.UAP_AudioPlayer_AddStream(Instance, stream.Instance);
+            var result = Interop.UAP_AudioPlayer_AddStream(Instance, stream);
             NativeException.ThrowIfNeeded();
             if (result == null)
                 throw new NativeException("Failed to add stream: native returned null");

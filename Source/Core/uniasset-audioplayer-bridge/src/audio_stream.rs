@@ -2,17 +2,16 @@
 //!
 //! `NativeAudioStream` wraps C function pointers so that external code can
 //! supply audio data (file readers, network streams, procedural generators)
-//! through a stable C ABI, analogous to how `NativeIOProvider` bridges
-//! C I/O callbacks into Rust's `Read` + `Seek` in uniasset-bridge.
+//! through a stable C ABI.
+//!
+//! The struct is `#[repr(C)]` — the caller allocates it and passes a pointer
+//! to [`UAP_AudioPlayer_AddStream`]. The Rust side stores a copy; the caller
+//! must keep the callbacks and `user_data` valid for the stream's lifetime.
 
 use std::ffi::c_void;
-use std::sync::Arc;
 
 use uniasset_audioplayer::mixer::AudioStream;
 use uniasset_audioplayer::AudioError;
-
-use crate::error::clear_error;
-use crate::object::{impl_native_handle, NativeHandle, NativeHandleExts};
 
 // ---------------------------------------------------------------------------
 // C callback types
@@ -42,21 +41,22 @@ type SampleRateFn = unsafe extern "C" fn(user_data: *mut c_void) -> u32;
 
 /// An [`AudioStream`] backed by C function pointers.
 ///
+/// `#[repr(C)]` so the C side can allocate and populate it directly.
 /// Each method delegates to the corresponding C callback, passing through
-/// the opaque `user_data` pointer that the C caller provided at creation time.
+/// the opaque `user_data` pointer that the C caller provided.
 ///
-/// # Thread safety
+/// # Safety
 ///
-/// The C callbacks are expected to be thread-safe — the C side is responsible
-/// for any required synchronization. The struct is marked `Send + Sync` so
-/// it can be shared via `Arc` to the audio thread.
+/// The caller must ensure that `user_data` and all function pointers remain
+/// valid for as long as the stream is alive in the mixer.
+#[repr(C)]
 pub struct NativeAudioStream {
-    user_data: *mut c_void,
-    read_fn: ReadFn,
-    seek_fn: SeekFn,
-    is_eof_fn: IsEofFn,
-    channels_fn: ChannelsFn,
-    sample_rate_fn: SampleRateFn,
+    pub user_data: *mut c_void,
+    pub read_fn: ReadFn,
+    pub seek_fn: SeekFn,
+    pub is_eof_fn: IsEofFn,
+    pub channels_fn: ChannelsFn,
+    pub sample_rate_fn: SampleRateFn,
 }
 
 // Safety: the C side is responsible for callback thread safety.
@@ -88,102 +88,5 @@ impl AudioStream for NativeAudioStream {
 
     fn sample_rate(&self) -> u32 {
         unsafe { (self.sample_rate_fn)(self.user_data) }
-    }
-}
-
-impl_native_handle!(NativeAudioStream);
-
-// ---------------------------------------------------------------------------
-// Exported C API
-// ---------------------------------------------------------------------------
-
-/// Create a new audio stream backed by C callbacks.
-///
-/// `user_data` is an opaque pointer passed through to every callback.
-/// All five callbacks must be non-null.
-///
-/// Returns a handle that can be passed to [`UAP_AudioPlayer_AddStream`].
-/// Returns null and sets the thread-local error on failure.
-///
-/// # Safety
-///
-/// All five callbacks must be valid function pointers or null. Null callbacks
-/// will cause an error to be returned.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn UAP_AudioStream_Create(
-    user_data: *mut c_void,
-    read_fn: Option<ReadFn>,
-    seek_fn: Option<SeekFn>,
-    is_eof_fn: Option<IsEofFn>,
-    channels_fn: Option<ChannelsFn>,
-    sample_rate_fn: Option<SampleRateFn>,
-) -> NativeHandle {
-    clear_error();
-
-    let read_fn = match read_fn {
-        Some(f) => f,
-        None => {
-            crate::error::set_error("all audio stream callbacks must be non-null");
-            return std::ptr::null();
-        }
-    };
-    let seek_fn = match seek_fn {
-        Some(f) => f,
-        None => {
-            crate::error::set_error("all audio stream callbacks must be non-null");
-            return std::ptr::null();
-        }
-    };
-    let is_eof_fn = match is_eof_fn {
-        Some(f) => f,
-        None => {
-            crate::error::set_error("all audio stream callbacks must be non-null");
-            return std::ptr::null();
-        }
-    };
-    let channels_fn = match channels_fn {
-        Some(f) => f,
-        None => {
-            crate::error::set_error("all audio stream callbacks must be non-null");
-            return std::ptr::null();
-        }
-    };
-    let sample_rate_fn = match sample_rate_fn {
-        Some(f) => f,
-        None => {
-            crate::error::set_error("all audio stream callbacks must be non-null");
-            return std::ptr::null();
-        }
-    };
-
-    let stream = NativeAudioStream {
-        user_data,
-        read_fn,
-        seek_fn,
-        is_eof_fn,
-        channels_fn,
-        sample_rate_fn,
-    };
-
-    Arc::new(stream).into_handle()
-}
-
-/// Destroy an audio stream handle.
-///
-/// Drops the C caller's reference. The stream remains alive as long as
-/// any [`UAP_AudioPlayer_AddStream`] references still exist.
-///
-/// # Safety
-///
-/// `handle` must be a valid handle from [`UAP_AudioStream_Create`],
-/// and must not have been destroyed already.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn UAP_AudioStream_Destroy(handle: NativeHandle) {
-    if handle.is_null() {
-        return;
-    }
-    // Reconstruct and drop the Box<Arc<NativeAudioStream>>.
-    unsafe {
-        let _ = Box::from_raw(handle as *mut Arc<NativeAudioStream>);
     }
 }
