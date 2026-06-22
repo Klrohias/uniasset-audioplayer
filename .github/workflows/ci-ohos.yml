@@ -23,16 +23,22 @@ jobs:
     - name: Build OHOS (aarch64)
       if: '!cancelled()'
       run: |
+        export OHOS_CLANG_TARGET="aarch64-linux-ohos"
+        export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_OHOS_LINKER="${{github.workspace}}/Source/Core/.cargo/clang-ohos.sh"
         cargo build -p uniasset-audioplayer-bridge --manifest-path Source/Core/Cargo.toml --release --target aarch64-unknown-linux-ohos -Z build-std=std,panic_abort
 
     - name: Build OHOS (armv7)
       if: '!cancelled()'
       run: |
+        export OHOS_CLANG_TARGET="arm-linux-ohos"
+        export CARGO_TARGET_ARMV7_UNKNOWN_LINUX_OHOS_LINKER="${{github.workspace}}/Source/Core/.cargo/clang-ohos.sh"
         cargo build -p uniasset-audioplayer-bridge --manifest-path Source/Core/Cargo.toml --release --target armv7-unknown-linux-ohos -Z build-std=std,panic_abort
 
     - name: Build OHOS (x86_64)
       if: '!cancelled()'
       run: |
+        export OHOS_CLANG_TARGET="x86_64-linux-ohos"
+        export CARGO_TARGET_X86_64_UNKNOWN_LINUX_OHOS_LINKER="${{github.workspace}}/Source/Core/.cargo/clang-ohos.sh"
         cargo build -p uniasset-audioplayer-bridge --manifest-path Source/Core/Cargo.toml --release --target x86_64-unknown-linux-ohos -Z build-std=std,panic_abort
 
     - name: Upload Artifact (aarch64-ohos)
