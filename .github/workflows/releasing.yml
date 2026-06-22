@@ -17,9 +17,12 @@ jobs:
   build-android:
     uses: ./.github/workflows/ci-android.yml
 
+  build-ohos:
+    uses: ./.github/workflows/ci-ohos.yml
+
   releasing:
     runs-on: ubuntu-latest
-    needs: ['build-win', 'build-darwin', 'build-android']
+    needs: ['build-win', 'build-darwin', 'build-android', 'build-ohos']
     if: '!cancelled()'
 
     steps:

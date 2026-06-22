@@ -1,0 +1,57 @@
+name: 'Build Uniasset AudioPlayer (OHOS)'
+
+on:
+  workflow_dispatch: {}
+  workflow_call: {}
+
+jobs:
+  build-ohos:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Setup Rust
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        toolchain: nightly
+        target: aarch64-unknown-linux-ohos,armv7-unknown-linux-ohos,x86_64-unknown-linux-ohos
+        components: rust-src
+
+    - name: Setup OHOS SDK
+      uses: openharmony-rs/setup-ohos-sdk@v1.0.0
+
+    - name: Build OHOS (aarch64)
+      if: '!cancelled()'
+      run: |
+        cargo build -p uniasset-audioplayer-bridge --manifest-path Source/Core/Cargo.toml --release --target aarch64-unknown-linux-ohos -Z build-std=std,panic_abort
+
+    - name: Build OHOS (armv7)
+      if: '!cancelled()'
+      run: |
+        cargo build -p uniasset-audioplayer-bridge --manifest-path Source/Core/Cargo.toml --release --target armv7-unknown-linux-ohos -Z build-std=std,panic_abort
+
+    - name: Build OHOS (x86_64)
+      if: '!cancelled()'
+      run: |
+        cargo build -p uniasset-audioplayer-bridge --manifest-path Source/Core/Cargo.toml --release --target x86_64-unknown-linux-ohos -Z build-std=std,panic_abort
+
+    - name: Upload Artifact (aarch64-ohos)
+      if: '!cancelled()'
+      uses: actions/upload-artifact@v7
+      with:
+        name: libuniasset_audioplayer-aarch64-ohos
+        path: ${{github.workspace}}/Source/Core/target/aarch64-unknown-linux-ohos/release/libuniasset_audioplayer.so
+
+    - name: Upload Artifact (armv7-ohos)
+      if: '!cancelled()'
+      uses: actions/upload-artifact@v7
+      with:
+        name: libuniasset_audioplayer-armv7-ohos
+        path: ${{github.workspace}}/Source/Core/target/armv7-unknown-linux-ohos/release/libuniasset_audioplayer.so
+
+    - name: Upload Artifact (x86_64-ohos)
+      if: '!cancelled()'
+      uses: actions/upload-artifact@v7
+      with:
+        name: libuniasset_audioplayer-x86_64-ohos
+        path: ${{github.workspace}}/Source/Core/target/x86_64-unknown-linux-ohos/release/libuniasset_audioplayer.so

@@ -20,18 +20,25 @@ mod oboe;
 #[cfg(target_os = "android")]
 pub use oboe::OboeDevice;
 
+#[cfg(target_os = "ohos")]
+mod ohos;
+#[cfg(target_os = "ohos")]
+pub use ohos::OhosDevice;
+
 #[cfg(not(any(
     target_os = "macos",
     target_os = "ios",
     target_os = "windows",
-    target_os = "android"
+    target_os = "android",
+    target_os = "ohos"
 )))]
 mod dummy;
 #[cfg(not(any(
     target_os = "macos",
     target_os = "ios",
     target_os = "windows",
-    target_os = "android"
+    target_os = "android",
+    target_os = "ohos"
 )))]
 pub use dummy::DummyDevice;
 
@@ -53,11 +60,17 @@ pub(crate) fn create_device() -> Result<Box<dyn AudioDevice>, AudioError> {
         OboeDevice::new().map(|d| Box::new(d) as Box<dyn AudioDevice>)
     }
 
+    #[cfg(target_os = "ohos")]
+    {
+        OhosDevice::new().map(|d| Box::new(d) as Box<dyn AudioDevice>)
+    }
+
     #[cfg(not(any(
         target_os = "macos",
         target_os = "ios",
         target_os = "windows",
-        target_os = "android"
+        target_os = "android",
+        target_os = "ohos"
     )))]
     {
         Ok(Box::new(DummyDevice::new()))
