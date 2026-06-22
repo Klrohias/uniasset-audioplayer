@@ -33,6 +33,21 @@ jobs:
         with:
           path: 'outputs/'
 
+      - name: Zip Unity SDK scripts
+        if: '!cancelled()'
+        run: |
+          pushd "${{github.workspace}}/Source/UnityDemo/UniassetAudioPlayerDemo/Assets/Plugins"
+          zip -r "${{github.workspace}}/uniasset-audioplayer-unity-scripts.zip" "Uniasset.AudioPlayer/"
+          popd
+
+      - name: Upload Unity SDK scripts to release
+        if: '!cancelled()'
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: "${{github.workspace}}/uniasset-audioplayer-unity-scripts.zip"
+          asset_name: "uniasset-audioplayer-unity-scripts.zip"
+
       - name: Zipping all things
         if: '!cancelled()'
         run: |
