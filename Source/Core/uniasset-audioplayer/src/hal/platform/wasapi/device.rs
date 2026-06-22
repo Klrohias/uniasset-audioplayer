@@ -42,7 +42,7 @@ use windows::Win32::System::Threading::{
     WaitForMultipleObjects, INFINITE,
 };
 use windows::Win32::Foundation::{HANDLE, WAIT_OBJECT_0, CloseHandle};
-use windows::core::{Interface, PCWSTR};
+use windows::core::PCWSTR;
 
 use crate::error::AudioError;
 use crate::hal::AudioCallback;
@@ -59,6 +59,12 @@ const DEFAULT_CHANNELS: u16 = 2;
 
 /// Buffer duration in 100-nanosecond units (~21 ms).
 const HNS_BUFFER_DURATION: i64 = 210_000;
+
+/// CLSID for the `MMDeviceEnumerator` COM class.
+/// `IMMDeviceEnumerator::IID` is the *interface* IID —
+/// `CoCreateInstance` requires the *class* CLSID.
+const CLSID_MMDEVICE_ENUMERATOR: windows::core::GUID =
+    windows::core::GUID::from_u128(0xBCDE0395_E52F_467C_8E3D_C4579291692E);
 
 /// Maximum consecutive rebuild attempts before giving up.
 const MAX_REBUILD_ATTEMPTS: u32 = 5;
@@ -139,7 +145,7 @@ impl WasapiClient {
 
         // 1. Enumerator
         let enumerator: IMMDeviceEnumerator = unsafe {
-            CoCreateInstance(&IMMDeviceEnumerator::IID, None, CLSCTX_ALL)
+            CoCreateInstance(&CLSID_MMDEVICE_ENUMERATOR, None, CLSCTX_ALL)
         }
         .map_err(|_| AudioError::DeviceNotFound)?;
 
@@ -543,7 +549,7 @@ impl WasapiDevice {
         // ── Query initial format ──────────────────────────────────────
         let (sample_rate, channels) = {
             let enumerator: IMMDeviceEnumerator = unsafe {
-                CoCreateInstance(&IMMDeviceEnumerator::IID, None, CLSCTX_ALL)
+                CoCreateInstance(&CLSID_MMDEVICE_ENUMERATOR, None, CLSCTX_ALL)
             }
             .map_err(|_| AudioError::DeviceNotFound)?;
             let device = unsafe {
