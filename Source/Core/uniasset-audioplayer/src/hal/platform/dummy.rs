@@ -46,7 +46,7 @@ impl AudioDevice for DummyDevice {
     fn format(&self) -> AudioFormat {
         self.format
     }
-    fn start(&mut self, mut callback: Box<dyn AudioCallback>) -> Result<(), AudioError> {
+    fn start(&mut self, callback: Box<dyn AudioCallback>) -> Result<(), AudioError> {
         if self.running {
             return Ok(());
         }
