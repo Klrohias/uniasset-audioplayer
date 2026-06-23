@@ -5,9 +5,26 @@ using AOT;
 namespace Uniasset.AudioPlayer.Unsafe
 {
     /// <summary>
-    /// Bridges a managed <see cref="AudioPlayer.ModifierCallback"/> to the native
-    /// modifier callback signature. Contains all pointer/unsafe code related to
-    /// modifier installation so that <see cref="AudioPlayer.PlayHandle"/> remains safe.
+    /// <c>#[repr(C)]</c> struct matching the native <c>NativeModifier</c>.
+    /// Contains a callback function pointer and opaque user data pointer.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct NativeModifier
+    {
+        /// <summary>
+        /// Callback: <c>void (*)(float* buffer, uint64_t sample_count, void* user_data)</c>.
+        /// Must be wait-free — runs on the audio thread.
+        /// </summary>
+        public void* callback;
+
+        /// <summary>Opaque user data passed to every invocation.</summary>
+        public void* userData;
+    }
+
+    /// <summary>
+    /// Bridges a managed <see cref="ModifierCallback"/> to the native
+    /// <c>NativeModifier</c> struct. Contains all pointer/unsafe code related to
+    /// modifier installation so that <see cref="PlayHandle"/> remains safe.
     /// </summary>
     internal static unsafe class ModifierBridge
     {
@@ -19,19 +36,22 @@ namespace Uniasset.AudioPlayer.Unsafe
         private delegate void NativeModifierFn(float* buffer, ulong sampleCount, void* userData);
 
         // ==================================================================
-        // Static singleton delegate + pre-computed function pointer
+        // Static singleton delegates + pre-computed function pointers
         // ==================================================================
 
         private static readonly NativeModifierFn s_delegate = Bridge;
+        private static readonly NativeModifierFn s_noopDelegate = Noop;
         private static readonly void* s_ptr;
+        private static readonly void* s_noopPtr;
 
         static ModifierBridge()
         {
             s_ptr = Marshal.GetFunctionPointerForDelegate(s_delegate).ToPointer();
+            s_noopPtr = Marshal.GetFunctionPointerForDelegate(s_noopDelegate).ToPointer();
         }
 
         // ==================================================================
-        // Audio-thread callback
+        // Audio-thread callbacks
         // ==================================================================
 
         /// <summary>
@@ -57,6 +77,17 @@ namespace Uniasset.AudioPlayer.Unsafe
             }
         }
 
+        /// <summary>
+        /// No-op callback used to safely replace a managed modifier before
+        /// freeing its GCHandle.
+        /// </summary>
+        [MonoPInvokeCallback(typeof(NativeModifierFn))]
+        private static void Noop(float* buffer, ulong sampleCount, void* userData)
+        {
+            // Intentionally empty — used to neutralize an installed modifier
+            // so the GCHandle can be freed without the audio thread accessing it.
+        }
+
         // ==================================================================
         // Public helper: install or remove a modifier
         // ==================================================================
@@ -71,26 +102,27 @@ namespace Uniasset.AudioPlayer.Unsafe
         {
             if (callback == null)
             {
-                handle.SetModifier(null, null);
+                // Replace the current modifier with a no-op so the audio thread
+                // stops calling the managed callback, then we can safely free the
+                // old GCHandle. No need to create a new binding.
+                var noopModifier = new NativeModifier
+                {
+                    callback = s_noopPtr,
+                    userData = null,
+                };
+                handle.SetModifier(&noopModifier);
                 return null;
             }
 
             var gcHandle = GCHandle.Alloc(callback);
-            try
+            var userData = GCHandle.ToIntPtr(gcHandle).ToPointer();
+            var modifier = new NativeModifier
             {
-                var userData = GCHandle.ToIntPtr(gcHandle).ToPointer();
-                var success = handle.SetModifier(s_ptr, userData);
-                if (success)
-                    return new ModifierBinding(gcHandle);
-
-                gcHandle.Free();
-                return null;
-            }
-            catch
-            {
-                gcHandle.Free();
-                throw;
-            }
+                callback = s_ptr,
+                userData = userData,
+            };
+            handle.SetModifier(&modifier);
+            return new ModifierBinding(gcHandle);
         }
     }
 

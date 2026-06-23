@@ -22,14 +22,11 @@ namespace Uniasset.AudioPlayer.Unsafe
             if (Interop.UAP_HasError() == 0)
                 return;
 
-            const int maxLen = 512;
-            var buffer = stackalloc sbyte[maxLen];
-            var len = Interop.UAP_GetError(buffer, maxLen);
-
-            if (len == 0)
+            var ptr = Interop.UAP_GetError();
+            if (ptr == null)
                 return;
 
-            var message = Marshal.PtrToStringAnsi(new IntPtr(buffer), (int)len);
+            var message = Marshal.PtrToStringAnsi((IntPtr)ptr);
             if (string.IsNullOrWhiteSpace(message))
                 return;
 

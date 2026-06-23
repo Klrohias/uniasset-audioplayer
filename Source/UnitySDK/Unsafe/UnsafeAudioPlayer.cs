@@ -50,12 +50,15 @@ namespace Uniasset.AudioPlayer.Unsafe
         /// <summary>
         /// Add an audio stream to the player. <paramref name="stream"/> must point
         /// to a valid <see cref="NativeAudioStream"/> that the caller keeps alive.
+        /// If <paramref name="playImmediate"/> is true, playback starts immediately;
+        /// otherwise the stream is added in a paused state.
         /// Returns a <see cref="UnsafePlayHandle"/>.
         /// Throws <see cref="NativeException"/> on failure.
         /// </summary>
-        public UnsafePlayHandle AddStream(NativeAudioStream* stream)
+        public UnsafePlayHandle AddStream(NativeAudioStream* stream, bool playImmediate = true)
         {
-            var result = Interop.UAP_AudioPlayer_AddStream(Instance, stream);
+            var result = Interop.UAP_AudioPlayer_AddStream(
+                Instance, stream, playImmediate ? (byte)1 : (byte)0);
             NativeException.ThrowIfNeeded();
             if (result == null)
                 throw new NativeException("Failed to add stream: native returned null");
@@ -66,17 +69,9 @@ namespace Uniasset.AudioPlayer.Unsafe
         /// Add an audio stream by reference. The struct address is taken internally
         /// so the caller does not need an unsafe context.
         /// </summary>
-        public unsafe UnsafePlayHandle AddStream(ref NativeAudioStream stream)
+        public unsafe UnsafePlayHandle AddStream(ref NativeAudioStream stream, bool playImmediate = true)
         {
-            return AddStream(&stream);
-        }
-
-        /// <summary>
-        /// Remove all streams that have reached EOF. Call periodically to free resources.
-        /// </summary>
-        public void CleanupEof()
-        {
-            Interop.UAP_AudioPlayer_CleanupEof(Instance);
+            return AddStream(&stream, playImmediate);
         }
 
         /// <summary>
@@ -88,32 +83,30 @@ namespace Uniasset.AudioPlayer.Unsafe
             return result;
         }
 
-        /// <summary>Pause the audio device. Returns true on success.</summary>
-        public bool Pause()
+        /// <summary>
+        /// Pause the audio device (silences all output).
+        /// Throws <see cref="NativeException"/> on failure.
+        /// </summary>
+        public void Pause()
         {
-            var result = Interop.UAP_AudioPlayer_Pause(Instance);
+            Interop.UAP_AudioPlayer_Pause(Instance);
             NativeException.ThrowIfNeeded();
-            return result != 0;
-        }
-
-        /// <summary>Resume the audio device. Returns true on success.</summary>
-        public bool Resume()
-        {
-            var result = Interop.UAP_AudioPlayer_Resume(Instance);
-            NativeException.ThrowIfNeeded();
-            return result != 0;
-        }
-
-        /// <summary>Stop playback and close the audio device. Returns true on success.</summary>
-        public bool Stop()
-        {
-            var result = Interop.UAP_AudioPlayer_Stop(Instance);
-            NativeException.ThrowIfNeeded();
-            return result != 0;
         }
 
         /// <summary>
-        /// Destroy the native player handle. Stops playback and releases the device.
+        /// Resume the audio device after pausing.
+        /// Throws <see cref="NativeException"/> on failure.
+        /// </summary>
+        public void Resume()
+        {
+            Interop.UAP_AudioPlayer_Resume(Instance);
+            NativeException.ThrowIfNeeded();
+        }
+
+        /// <summary>
+        /// Destroy the native player handle. Drops the C caller's reference.
+        /// When the last reference is dropped, playback stops and the device
+        /// is released.
         /// Never throws (errors are silently ignored, matching the destroy-no-throw pattern).
         /// </summary>
         public void Destroy()

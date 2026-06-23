@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using Uniasset.AudioPlayer.Unsafe;
-using UnityEngine;
 
 namespace Uniasset.AudioPlayer
 {
@@ -19,7 +18,6 @@ namespace Uniasset.AudioPlayer
     /// var stream = new MyAudioStream { Channels = channels, SampleRate = sampleRate };
     /// var handle = player.Play(stream);
     /// handle.Volume = 0.5f;
-    /// // ... periodically call player.CleanupEof() ...
     /// </code>
     /// </remarks>
     public sealed class AudioPlayer : IDisposable
@@ -27,7 +25,6 @@ namespace Uniasset.AudioPlayer
         private int _disposedFlag;
         private readonly object _lock = new();
         private readonly List<PlayHandle> _activeHandles = new();
-        private CancellationTokenSource _cts = new();
 
         /// <summary>
         /// The raw unsafe handle. Exposed for advanced use cases.
@@ -65,7 +62,7 @@ namespace Uniasset.AudioPlayer
         // ==================================================================
 
         /// <summary>
-        /// Add an audio stream to the player and start playback.
+        /// Add an audio stream to the player and start playback immediately.
         /// </summary>
         /// <param name="stream">
         /// The audio stream source. Its <see cref="IAudioStream.ReadF32"/>,
@@ -79,6 +76,28 @@ namespace Uniasset.AudioPlayer
         /// <exception cref="NativeException">Thrown if the native stream creation fails.</exception>
         public PlayHandle Play(IAudioStream stream)
         {
+            return AddStream(stream, playImmediate: true);
+        }
+
+        /// <summary>
+        /// Add an audio stream to the player.
+        /// </summary>
+        /// <param name="stream">
+        /// The audio stream source. Its <see cref="IAudioStream.ReadF32"/>,
+        /// <see cref="IAudioStream.IsEof"/>, <see cref="IAudioStream.Channels"/>,
+        /// and <see cref="IAudioStream.SampleRate"/> members will be called
+        /// from the audio thread — they MUST be wait-free.
+        /// </param>
+        /// <param name="playImmediate">
+        /// If true, playback starts immediately; otherwise the stream is
+        /// added in a paused state.
+        /// </param>
+        /// <returns>A <see cref="PlayHandle"/> for controlling playback.</returns>
+        /// <exception cref="ArgumentNullException">Thrown if <paramref name="stream"/> is null.</exception>
+        /// <exception cref="ObjectDisposedException">Thrown if the player has been disposed.</exception>
+        /// <exception cref="NativeException">Thrown if the native stream creation fails.</exception>
+        public PlayHandle AddStream(IAudioStream stream, bool playImmediate)
+        {
             ThrowIfDisposed();
             if (stream == null)
                 throw new ArgumentNullException(nameof(stream));
@@ -86,7 +105,7 @@ namespace Uniasset.AudioPlayer
             var binding = AudioStreamFactory.CreateBinding(stream);
             try
             {
-                var playHandlePtr = UnsafeHandle.AddStream(ref binding.NativeStream);
+                var playHandlePtr = UnsafeHandle.AddStream(ref binding.NativeStream, playImmediate);
 
                 var playHandle = new PlayHandle(playHandlePtr, binding);
 
@@ -105,8 +124,9 @@ namespace Uniasset.AudioPlayer
         }
 
         /// <summary>
-        /// Add an <see cref="UnityEngine.AudioClip"/> to the player and start playback.
-        /// The clip is wrapped in an <see cref="AudioClipStream"/> internally.
+        /// Add an <see cref="UnityEngine.AudioClip"/> to the player and start
+        /// playback immediately. The clip is wrapped in an
+        /// <see cref="AudioClipStream"/> internally.
         /// </summary>
         /// <param name="clip">The AudioClip to play.</param>
         /// <returns>A <see cref="PlayHandle"/> for controlling playback.</returns>
@@ -117,18 +137,6 @@ namespace Uniasset.AudioPlayer
         {
             var stream = new AudioClipStream(clip);
             return Play(stream);
-        }
-
-        /// <summary>
-        /// Remove all streams that have reached EOF.
-        /// Call this periodically (e.g. every frame or on a timer) to free
-        /// resources. Also removes disposed handles from the internal list.
-        /// </summary>
-        /// <exception cref="ObjectDisposedException">Thrown if the player has been disposed.</exception>
-        public void CleanupEof()
-        {
-            ThrowIfDisposed();
-            UnsafeHandle.CleanupEof();
         }
 
         /// <summary>
@@ -150,39 +158,24 @@ namespace Uniasset.AudioPlayer
 
         /// <summary>
         /// Pause the audio device (silences all output).
-        /// Returns true on success.
         /// </summary>
         /// <exception cref="ObjectDisposedException">Thrown if the player has been disposed.</exception>
         /// <exception cref="NativeException">Thrown if the native call fails.</exception>
-        public bool Pause()
+        public void Pause()
         {
             ThrowIfDisposed();
-            return UnsafeHandle.Pause();
+            UnsafeHandle.Pause();
         }
 
         /// <summary>
         /// Resume the audio device after pausing.
-        /// Returns true on success.
         /// </summary>
         /// <exception cref="ObjectDisposedException">Thrown if the player has been disposed.</exception>
         /// <exception cref="NativeException">Thrown if the native call fails.</exception>
-        public bool Resume()
+        public void Resume()
         {
             ThrowIfDisposed();
-            return UnsafeHandle.Resume();
-        }
-
-        /// <summary>
-        /// Stop playback and close the audio device.
-        /// After this call, the device cannot be resumed.
-        /// Returns true on success.
-        /// </summary>
-        /// <exception cref="ObjectDisposedException">Thrown if the player has been disposed.</exception>
-        /// <exception cref="NativeException">Thrown if the native call fails.</exception>
-        public bool Stop()
-        {
-            ThrowIfDisposed();
-            return UnsafeHandle.Stop();
+            UnsafeHandle.Resume();
         }
 
         // ==================================================================
@@ -203,9 +196,6 @@ namespace Uniasset.AudioPlayer
         {
             if (Interlocked.CompareExchange(ref _disposedFlag, 1, 0) != 0)
                 return;
-
-            _cts.Cancel();
-            _cts.Dispose();
 
             PlayHandle[] handles;
             lock (_lock)

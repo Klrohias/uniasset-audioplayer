@@ -14,16 +14,14 @@ namespace Uniasset.AudioPlayer.Unsafe
         public static extern byte UAP_HasError();
 
         /// <summary>
-        /// Copies the last error message into the caller-provided buffer.
-        /// Writes at most <c>buffer_size - 1</c> bytes plus a null terminator.
-        /// Returns the number of bytes written (excluding null), or 0 if no error.
-        /// The error slot is cleared after this call.
+        /// Returns a pointer to a null-terminated error message string, or null if
+        /// there is no error. The pointer is valid until the next FFI call on this
+        /// thread (most FFI functions clear the error slot on entry). Calling this
+        /// function does <b>not</b> clear the error.
         /// </summary>
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        [return: NativeTypeName("uint32_t")]
-        public static extern uint UAP_GetError(
-            [NativeTypeName("char *")] sbyte* buffer,
-            [NativeTypeName("uint32_t")] uint buffer_size);
+        [return: NativeTypeName("const char *")]
+        public static extern byte* UAP_GetError();
 
         // ==================================================================
         // Player Lifecycle (2 functions)
@@ -31,14 +29,15 @@ namespace Uniasset.AudioPlayer.Unsafe
 
         /// <summary>
         /// Create a new AudioPlayer and open the platform audio device.
-        /// Returns a handle on success, null on failure — check error.
+        /// Returns a handle on success, or null on failure.
         /// </summary>
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         public static extern void* UAP_AudioPlayer_New();
 
         /// <summary>
-        /// Destroy an AudioPlayer. Stops playback and releases the audio device.
-        /// No-op on null handle.
+        /// Destroy an AudioPlayer. Drops the C caller's reference.
+        /// When the last reference is dropped, playback stops and the audio device
+        /// is released.
         /// </summary>
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         public static extern void UAP_AudioPlayer_Destroy(void* handle);
@@ -49,7 +48,6 @@ namespace Uniasset.AudioPlayer.Unsafe
 
         /// <summary>
         /// Query the audio format (sample rate / channel count) of the output device.
-        /// No-op if any pointer is null.
         /// </summary>
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         public static extern void UAP_AudioPlayer_Format(
@@ -62,44 +60,44 @@ namespace Uniasset.AudioPlayer.Unsafe
         // ==================================================================
 
         /// <summary>
-        /// Add an audio stream to the player. `stream` must point to a valid
-        /// `NativeAudioStream` struct that the caller keeps alive.
-        /// Returns a PlayHandle, or null on error.
+        /// Add an audio stream to the player. <c>stream</c> must point to a valid
+        /// <see cref="NativeAudioStream"/> struct that the caller keeps alive.
+        /// If <c>playImmediate</c> is non-zero, the stream begins playing
+        /// immediately; otherwise it is added in a paused state.
+        /// Returns a <see cref="UnsafePlayHandle"/>.
         /// </summary>
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        public static extern void* UAP_AudioPlayer_AddStream(void* handle, void* stream);
+        public static extern void* UAP_AudioPlayer_AddStream(
+            void* handle,
+            void* stream,
+            [NativeTypeName("uint8_t")] byte playImmediate);
 
         /// <summary>
-        /// Remove all streams that have reached EOF. Call periodically to free resources.
-        /// </summary>
-        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        public static extern void UAP_AudioPlayer_CleanupEof(void* handle);
-
-        /// <summary>
-        /// Return the number of currently active streams. Returns 0 for null handles.
+        /// Return the number of currently active streams.
         /// </summary>
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         [return: NativeTypeName("uint32_t")]
         public static extern uint UAP_AudioPlayer_StreamCount(void* handle);
 
         // ==================================================================
-        // Device Control (3 functions)
+        // Device Control (2 functions)
         // ==================================================================
 
-        /// <summary>Pause the audio device. Returns true on success.</summary>
+        /// <summary>
+        /// Pause playback on the audio device.
+        /// On failure, the error is reported via <see cref="UAP_HasError"/> /
+        /// <see cref="UAP_GetError"/>.
+        /// </summary>
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        [return: NativeTypeName("bool")]
-        public static extern byte UAP_AudioPlayer_Pause(void* handle);
+        public static extern void UAP_AudioPlayer_Pause(void* handle);
 
-        /// <summary>Resume the audio device. Returns true on success.</summary>
+        /// <summary>
+        /// Resume playback on the audio device.
+        /// On failure, the error is reported via <see cref="UAP_HasError"/> /
+        /// <see cref="UAP_GetError"/>.
+        /// </summary>
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        [return: NativeTypeName("bool")]
-        public static extern byte UAP_AudioPlayer_Resume(void* handle);
-
-        /// <summary>Stop playback and close the audio device. Returns true on success.</summary>
-        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        [return: NativeTypeName("bool")]
-        public static extern byte UAP_AudioPlayer_Stop(void* handle);
+        public static extern void UAP_AudioPlayer_Resume(void* handle);
 
         // ==================================================================
         // PlayHandle (9 functions)
@@ -107,61 +105,67 @@ namespace Uniasset.AudioPlayer.Unsafe
 
         /// <summary>
         /// Destroy a PlayHandle. Drops the C caller's reference.
-        /// The handle remains valid to the mixer until cleanup.
-        /// No-op on null handle.
+        /// The mixer holds its own references independently; the underlying
+        /// stream continues playing until it reaches EOF or
+        /// <see cref="UAP_PlayHandle_Stop"/> is called.
         /// </summary>
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         public static extern void UAP_PlayHandle_Destroy(void* handle);
 
-        /// <summary>Pause playback for this stream. No-op on null handle.</summary>
+        /// <summary>Pause playback for this stream. No-op if the stream is no longer alive.</summary>
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         public static extern void UAP_PlayHandle_Pause(void* handle);
 
-        /// <summary>Resume playback for this stream. No-op on null handle.</summary>
+        /// <summary>Resume playback for this stream. No-op if the stream is no longer alive.</summary>
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         public static extern void UAP_PlayHandle_Resume(void* handle);
 
-        /// <summary>Returns true if the stream is currently paused. False for null handles.</summary>
+        /// <summary>Returns true if the stream is currently paused.</summary>
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         [return: NativeTypeName("bool")]
         public static extern byte UAP_PlayHandle_IsPaused(void* handle);
 
-        /// <summary>Returns true if the stream is still alive. False for null handles.</summary>
+        /// <summary>Returns true if the stream is still active in the mixer.</summary>
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         [return: NativeTypeName("bool")]
         public static extern byte UAP_PlayHandle_IsAlive(void* handle);
 
-        /// <summary>Signal the stream to stop. No-op on null handle.</summary>
+        /// <summary>
+        /// Signal the stream to stop. The mixer will remove it from the
+        /// active stream set once it observes the stop signal.
+        /// No-op if the stream is no longer alive.
+        /// </summary>
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         public static extern void UAP_PlayHandle_Stop(void* handle);
 
-        /// <summary>Set the volume for this stream, clamped to [0.0, 1.0]. No-op on null handle.</summary>
+        /// <summary>Set the volume for this stream. <c>volume</c> is clamped to [0.0, 1.0].</summary>
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         public static extern void UAP_PlayHandle_SetVolume(void* handle, float volume);
 
-        /// <summary>Return the current volume in [0.0, 1.0]. Returns 0.0 for null handles.</summary>
+        /// <summary>Return the current volume in [0.0, 1.0].</summary>
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         public static extern float UAP_PlayHandle_GetVolume(void* handle);
 
         /// <summary>
         /// Seek the stream to the given frame position.
-        /// Returns true on success. On failure check error.
-        /// Returns false for null handles.
+        /// On failure, the error is reported via <see cref="UAP_HasError"/> /
+        /// <see cref="UAP_GetError"/>.
         /// </summary>
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        [return: NativeTypeName("bool")]
-        public static extern byte UAP_PlayHandle_Seek(void* handle, ulong frame);
+        public static extern void UAP_PlayHandle_Seek(void* handle, ulong frame);
 
         /// <summary>
-        /// Install or remove a pre-mix modifier callback for this stream.
-        /// Pass null callback to remove. user_data must remain valid while modifier is installed.
-        /// Returns true on success, false on error (null handle).
+        /// Install a pre-mix modifier callback for this stream.
+        /// <c>modifier</c> points to a <see cref="NativeModifier"/> containing
+        /// the callback function pointer and opaque user data. The callback is
+        /// called on the audio thread with the interleaved PCM buffer for this
+        /// stream before it is mixed into the output.
+        /// The callback must be wait-free. <c>user_data</c> must remain valid
+        /// for as long as the modifier is installed.
         /// </summary>
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        [return: NativeTypeName("bool")]
-        public static extern byte UAP_PlayHandle_SetModifier(
+        public static extern void UAP_PlayHandle_SetModifier(
             void* handle,
-            void* callback,
-            void* user_data);
+            [NativeTypeName("const NativeModifier *")] NativeModifier* modifier);
     }
 }

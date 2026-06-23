@@ -88,10 +88,10 @@ namespace UniassetAudioPlayerDemo
 
         private void Update()
         {
-            // Periodic EOF cleanup.
             if (_player != null)
             {
-                _player.CleanupEof();
+                // Stream lifecycle is managed automatically by the mixer.
+                // Check IsAlive to detect when a stream finishes.
 
                 // If the stream finished, clean up.
                 if (_handleActive && !(_handle?.IsAlive ?? false))

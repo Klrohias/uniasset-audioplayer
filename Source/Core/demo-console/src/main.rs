@@ -209,13 +209,13 @@ fn main() {
         next_id: 0,
     }));
 
-    // ── Background EOF cleanup thread ──────────────────────────────────
-    let cleanup_state = Arc::clone(&state);
+    // ── Background stale-entry cleanup ──────────────────────────────────
+    // audio-player-worker handles mixer-level EOF cleanup automatically;
+    // this thread only purges stale entries from the shell state HashMap.
+    let retain_state = Arc::clone(&state);
     thread::spawn(move || loop {
         thread::sleep(Duration::from_millis(500));
-        let mut s = cleanup_state.lock();
-        s.player.cleanup_eof();
-        // Remove entries whose handles are no longer alive (EOF reached).
+        let mut s = retain_state.lock();
         s.entries.retain(|_id, entry| entry.handle.is_alive());
     });
 
@@ -370,11 +370,10 @@ fn cmd_stop(state: &Arc<Mutex<ShellState>>, arg: &str) {
     let mut s = state.lock();
     match s.entries.remove(&id) {
         Some(entry) => {
-            // Mark the stream as EOF so cleanup_eof removes it from the mixer.
+            // audio-player-worker will remove this stream from the mixer
+            // once it observes the stop signal.
             entry.handle.stop();
             println!("[id={}] Stopped '{}'", id, entry.path);
-            // Rebuild the mixer snapshot to actually remove the stream.
-            s.player.cleanup_eof();
         }
         None => println!("No stream with id {}", id),
     }

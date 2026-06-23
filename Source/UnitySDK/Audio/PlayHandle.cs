@@ -37,8 +37,7 @@ namespace Uniasset.AudioPlayer
         public bool IsPaused => UnsafeHandle.IsPaused();
 
         /// <summary>
-        /// Returns true if this stream is still alive in the mixer
-        /// (has not been cleaned up via <see cref="AudioPlayer.CleanupEof"/>).
+        /// Returns true if this stream is still active in the mixer.
         /// </summary>
         public bool IsAlive => UnsafeHandle.IsAlive();
 
@@ -59,19 +58,18 @@ namespace Uniasset.AudioPlayer
         public void Resume() => UnsafeHandle.Resume();
 
         /// <summary>
-        /// Signal this stream to stop. The mixer will remove it on the
-        /// next <see cref="AudioPlayer.CleanupEof"/> call.
+        /// Signal this stream to stop. The mixer removes it from the active
+        /// stream set once it observes the stop signal.
         /// </summary>
         public void Stop() => UnsafeHandle.Stop();
 
         /// <summary>
         /// Seek to the given absolute frame position.
-        /// Returns true on success.
         /// </summary>
         /// <exception cref="NativeException">Thrown if the native seek fails.</exception>
-        public bool Seek(ulong frame)
+        public void Seek(ulong frame)
         {
-            return UnsafeHandle.Seek(frame);
+            UnsafeHandle.Seek(frame);
         }
 
         /// <summary>
@@ -83,22 +81,21 @@ namespace Uniasset.AudioPlayer
         /// MUST be wait-free (no locks, no allocations, no blocking I/O) —
         /// it runs on the real-time audio thread.
         /// </param>
-        /// <returns>True on success.</returns>
-        /// <exception cref="NativeException">Thrown if the native call fails.</exception>
-        public bool SetModifier(ModifierCallback? callback)
+        public void SetModifier(ModifierCallback? callback)
         {
-            // Remove existing modifier first — unregister from native side
-            // before freeing the GCHandle, so the audio thread stops using it.
+            // Remove existing modifier first — replace with no-op on the native
+            // side so the audio thread stops using the old callback, then free
+            // the GCHandle safely.
             if (_modifierBinding.HasValue)
             {
-                UnsafeHandle.SetModifier(null, null);
+                // Install a no-op to neutralize the old modifier.
+                ModifierBridge.Install(UnsafeHandle, null);
                 _modifierBinding.Value.Free();
                 _modifierBinding = null;
             }
 
             var binding = ModifierBridge.Install(UnsafeHandle, callback);
             _modifierBinding = binding;
-            return binding != null;
         }
 
         // ==================================================================
@@ -114,11 +111,11 @@ namespace Uniasset.AudioPlayer
             if (Interlocked.CompareExchange(ref _disposedFlag, 1, 0) != 0)
                 return;
 
-            // Remove modifier first — audio thread must stop using the GCHandle
-            // before we free it.
+            // Remove modifier first — replace with no-op so the audio thread
+            // stops using the managed callback before we free the GCHandle.
             if (_modifierBinding.HasValue)
             {
-                UnsafeHandle.SetModifier(null, null);
+                ModifierBridge.Install(UnsafeHandle, null);
                 _modifierBinding.Value.Free();
                 _modifierBinding = null;
             }
@@ -127,7 +124,7 @@ namespace Uniasset.AudioPlayer
             UnsafeHandle.Stop();
 
             // Drop our C reference. The mixer retains internal Arc refs until
-            // CleanupEof is called on the player.
+            // the stream is removed from the mixer.
             UnsafeHandle.Destroy();
 
             // Free the stream GCHandle. The callback try/catch handles the edge

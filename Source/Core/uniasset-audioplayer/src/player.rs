@@ -6,7 +6,8 @@
 //! ```text
 //! AudioStream(s) → Mixer → AudioCallback → AudioDevice → OS Audio
 //!                    ↑                        ↑
-//!                    AudioPlayer (owns both, wires them together)
+//!              [audio-player-worker]     AudioPlayer (owns both,
+//!              (periodic EOF cleanup)     wires them together)
 //! ```
 //!
 //! # Example
@@ -21,10 +22,13 @@
 //! handle.set_volume(0.5);
 //!
 //! // Player starts playing immediately.
-//! // Call player.cleanup_eof() periodically to remove finished streams.
+//! // EOF streams are cleaned up automatically by the worker thread.
 //! ```
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use parking_lot::Mutex;
 
@@ -57,11 +61,13 @@ impl AudioCallback for MixerCallback {
 ///
 /// # Lifecycle
 ///
-/// - **Construction** — opens device, starts audio thread, begins pulling from mixer.
+/// - **Construction** — opens device, starts audio thread, spawns a worker
+///   thread (`audio-player-worker`) that periodically removes finished streams.
 /// - **Playback** — add streams, control them via [`PlayHandle`].
-/// - **Cleanup** — call [`cleanup_eof`](AudioPlayer::cleanup_eof) periodically
-///   (or on a timer) to remove finished streams.
-/// - **Shutdown** — drop the player or call [`stop`](AudioPlayer::stop).
+/// - **Cleanup** — finished (EOF) streams are automatically removed by the
+///   worker thread; no manual cleanup is needed.
+/// - **Shutdown** — drop the player; the worker thread is signaled to exit
+///   and the audio device is stopped.
 ///
 /// # Thread Safety
 ///
@@ -75,6 +81,13 @@ pub struct AudioPlayer {
     /// The platform audio device. Behind a mutex because `start`/`stop`/
     /// `pause`/`resume` take `&mut self`.
     device: Mutex<Box<dyn AudioDevice>>,
+
+    /// Signal to the worker thread that it should exit.
+    shutdown: Arc<AtomicBool>,
+
+    /// Handle to the worker thread (`audio-player-worker`).
+    /// `Option` so `Drop` can take ownership to join.
+    worker: Option<JoinHandle<()>>,
 }
 
 impl AudioPlayer {
@@ -96,9 +109,32 @@ impl AudioPlayer {
         });
         device.start(callback)?;
 
+        // ── Worker thread for periodic EOF cleanup ────────────────────────
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let worker_mixer = Arc::clone(&mixer);
+        let worker_shutdown = Arc::clone(&shutdown);
+
+        let worker = thread::Builder::new()
+            .name("audio-player-worker".into())
+            .spawn(move || {
+                // Check shutdown flag every 10ms; run cleanup every 500ms.
+                let mut ticks: u32 = 0;
+                while !worker_shutdown.load(Ordering::Relaxed) {
+                    thread::sleep(Duration::from_millis(10));
+                    ticks += 1;
+                    if ticks % 50 == 0 {
+                        // ~500ms elapsed
+                        worker_mixer.cleanup_eof();
+                    }
+                }
+            })
+            .ok(); // Best-effort: if thread spawn fails, playback still works.
+
         Ok(Self {
             mixer,
             device: Mutex::new(device),
+            shutdown,
+            worker,
         })
     }
 
@@ -118,15 +154,6 @@ impl AudioPlayer {
     /// The stream will begin playing immediately (unless paused via the handle).
     pub fn add_stream(&self, stream: Arc<dyn AudioStream>, play_immediate: bool) -> PlayHandle {
         self.mixer.add_stream(stream, play_immediate)
-    }
-
-    /// Remove streams that have reached EOF.
-    ///
-    /// This should be called periodically from the application thread
-    /// (e.g., on a timer or at idle). The audio thread only sets the EOF
-    /// flag; it never deallocates finished streams.
-    pub fn cleanup_eof(&self) {
-        self.mixer.cleanup_eof();
     }
 
     /// Number of streams currently in the mixer.
@@ -154,6 +181,14 @@ impl AudioPlayer {
 
 impl Drop for AudioPlayer {
     fn drop(&mut self) {
+        // Signal the worker thread to exit.
+        self.shutdown.store(true, Ordering::Release);
+
+        // Wait for the worker thread to finish (at most ~510ms).
+        if let Some(handle) = self.worker.take() {
+            let _ = handle.join();
+        }
+
         // Best-effort stop on drop. Ignore errors — the OS will clean up.
         let _ = self.device.lock().stop();
     }

@@ -109,10 +109,9 @@ impl PlayHandle {
 
     /// Stop playback and mark this stream for removal from the mixer.
     ///
-    /// Sets the EOF flag so that the next call to
-    /// [`Mixer::cleanup_eof`](crate::mixer::Mixer::cleanup_eof) (or
-    /// [`AudioPlayer::cleanup_eof`](crate::player::AudioPlayer::cleanup_eof))
-    /// will remove this stream from the mixer's snapshot.
+    /// Sets the EOF flag so that [`Mixer::cleanup_eof`] will remove this
+    /// stream from the mixer's snapshot on its next periodic run
+    /// (called automatically by the audio-player-worker thread).
     ///
     /// If the stream has already been removed from the mixer, this is a no-op.
     pub fn stop(&self) {
