@@ -1,5 +1,5 @@
 use std::cell::UnsafeCell;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
@@ -132,8 +132,12 @@ impl Mixer {
     ///
     /// Returns a [`PlayHandle`] that can be used to control playback
     /// (volume, pause, seek, modifier).
-    pub fn add_stream(&self, stream: Arc<dyn AudioStream>) -> PlayHandle {
-        let state = Arc::new(StreamState::new());
+    pub fn add_stream(&self, stream: Arc<dyn AudioStream>, play_immediate: bool) -> PlayHandle {
+        let state = Arc::new(StreamState {
+            paused: AtomicBool::new(!play_immediate),
+            ..Default::default()
+        });
+
         let handle = PlayHandle {
             state: Arc::clone(&state),
             stream: Arc::clone(&stream),

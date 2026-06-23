@@ -116,8 +116,8 @@ impl AudioPlayer {
     /// (volume, pause/resume, seek, per-stream effects).
     ///
     /// The stream will begin playing immediately (unless paused via the handle).
-    pub fn add_stream(&self, stream: Arc<dyn AudioStream>) -> PlayHandle {
-        self.mixer.add_stream(stream)
+    pub fn add_stream(&self, stream: Arc<dyn AudioStream>, play_immediate: bool) -> PlayHandle {
+        self.mixer.add_stream(stream, play_immediate)
     }
 
     /// Remove streams that have reached EOF.
@@ -149,16 +149,6 @@ impl AudioPlayer {
     /// Returns an error if the underlying device operation fails.
     pub fn resume(&self) -> Result<(), AudioError> {
         self.device.lock().resume()
-    }
-
-    /// Stop playback and release the audio device.
-    ///
-    /// After calling `stop`, the player can no longer be used for playback.
-    /// Further calls to any method are safe but will have no effect.
-    ///
-    /// Returns an error if the underlying device operation fails.
-    pub fn stop(&self) -> Result<(), AudioError> {
-        self.device.lock().stop()
     }
 }
 

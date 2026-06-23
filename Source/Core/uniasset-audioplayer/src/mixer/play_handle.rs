@@ -40,8 +40,8 @@ pub(crate) struct StreamState {
     pub modifier: ArcSwap<Option<ModifierFn>>,
 }
 
-impl StreamState {
-    pub fn new() -> Self {
+impl Default for StreamState {
+    fn default() -> Self {
         Self {
             alive: AtomicBool::new(true),
             paused: AtomicBool::new(false),

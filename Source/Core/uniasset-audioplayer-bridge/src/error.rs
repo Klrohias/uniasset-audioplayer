@@ -4,21 +4,35 @@
 //! retrieve the message via `UAP_GetError()`.
 
 use std::cell::RefCell;
+use std::ffi::CString;
+use std::fmt::Display;
 use std::os::raw::c_char;
+use std::ptr::null;
 
 thread_local! {
-    static ERROR_INFO: RefCell<Option<String>> = RefCell::new(None);
+    static ERROR_INFO: RefCell<Option<ErrorInfo>> = RefCell::new(None);
 }
 
-/// Clear the thread-local error slot. Called at the start of every
-/// fallible `extern "C"` function.
-pub(crate) fn clear_error() {
-    ERROR_INFO.with(|e| *e.borrow_mut() = None);
+#[derive(Clone)]
+pub struct ErrorInfo {
+    pub msg: CString,
 }
 
-/// Store an error message in the thread-local error slot.
-pub(crate) fn set_error(msg: &str) {
-    ERROR_INFO.with(|e| *e.borrow_mut() = Some(msg.to_string()));
+pub fn has_error() -> bool {
+    ERROR_INFO.with_borrow(|it| it.is_some())
+}
+
+pub fn with_error<T>(f: impl FnOnce(&Option<ErrorInfo>) -> T) -> T {
+    ERROR_INFO.with_borrow(|it| f(it))
+}
+
+pub fn set_error(error: impl Display) {
+    let message = CString::new(format!("{error}")).unwrap();
+    ERROR_INFO.replace(Some(ErrorInfo { msg: message }));
+}
+
+pub fn clear_error() {
+    ERROR_INFO.set(None);
 }
 
 // ---------------------------------------------------------------------------
@@ -31,42 +45,23 @@ pub unsafe extern "C" fn UAP_HasError() -> bool {
     ERROR_INFO.with(|e| e.borrow().is_some())
 }
 
-/// Copies the last error message into the caller-provided `buffer`.
+/// Returns a pointer to a null-terminated error message string, or null if
+/// there is no error.
 ///
-/// Writes at most `buffer_size - 1` bytes followed by a null terminator.
-/// Returns the number of bytes written (excluding null terminator), or 0
-/// if there is no error.
-///
-/// The error slot is **cleared** after this call.
-///
-/// # Safety
-///
-/// `buffer` must be a valid pointer to at least `buffer_size` bytes of
-/// writable memory. `buffer_size` must be accurate.
+/// The returned pointer is valid until the next FFI call on this thread
+/// (most FFI functions clear the error slot on entry). Calling this function
+/// does **not** clear the error.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn UAP_GetError(buffer: *mut c_char, buffer_size: u32) -> u32 {
-    if buffer.is_null() || buffer_size == 0 {
-        // Still clear the error even if buffer is invalid.
-        ERROR_INFO.with(|e| *e.borrow_mut() = None);
-        return 0;
+pub unsafe extern "C" fn UAP_GetError() -> *const c_char {
+    if !has_error() {
+        return null();
     }
 
-    ERROR_INFO.with(|e| {
-        let mut slot = e.borrow_mut();
-        match slot.as_ref() {
-            Some(msg) => {
-                let buf = unsafe {
-                    std::slice::from_raw_parts_mut(buffer as *mut u8, buffer_size as usize)
-                };
-                let max_len = buffer_size as usize - 1;
-                let src = msg.as_bytes();
-                let len = src.len().min(max_len);
-                buf[..len].copy_from_slice(&src[..len]);
-                buf[len] = 0; // null terminator
-                *slot = None; // clear after reading
-                len as u32
-            }
-            None => 0,
+    with_error(|it| {
+        if let Some(error_info) = it {
+            error_info.msg.as_ptr()
+        } else {
+            null()
         }
     })
 }
