@@ -8,10 +8,10 @@
 use coreaudio_sys::{
     kAudioFormatFlagIsFloat, kAudioFormatFlagIsPacked, kAudioFormatLinearPCM,
     kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, kAudioUnitScope_Output,
-    kAudioUnitType_Output, AudioComponentDescription,
-    AudioComponentFindNext, AudioComponentInstanceDispose, AudioComponentInstanceNew,
-    AudioOutputUnitStart, AudioOutputUnitStop, AudioStreamBasicDescription, AudioUnitGetProperty,
-    AudioUnitInitialize, AudioUnitRenderActionFlags, AudioUnitSetProperty, AudioUnitUninitialize,
+    kAudioUnitType_Output, AudioComponentDescription, AudioComponentFindNext,
+    AudioComponentInstanceDispose, AudioComponentInstanceNew, AudioOutputUnitStart,
+    AudioOutputUnitStop, AudioStreamBasicDescription, AudioUnitGetProperty, AudioUnitInitialize,
+    AudioUnitRenderActionFlags, AudioUnitSetProperty, AudioUnitUninitialize,
 };
 
 #[cfg(target_os = "macos")]

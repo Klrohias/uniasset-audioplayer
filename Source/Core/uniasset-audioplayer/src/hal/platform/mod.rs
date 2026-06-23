@@ -7,8 +7,6 @@ use crate::hal::AudioDevice;
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod coreaudio;
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-pub use coreaudio::CoreAudioDevice;
 
 #[cfg(target_os = "windows")]
 mod wasapi;
@@ -47,22 +45,22 @@ pub use dummy::DummyDevice;
 pub(crate) fn create_device() -> Result<Box<dyn AudioDevice>, AudioError> {
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     {
-        CoreAudioDevice::new().map(|d| Box::new(d) as Box<dyn AudioDevice>)
+        return coreaudio::CoreAudioDevice::new().map(|it| Box::new(it) as Box<dyn AudioDevice>);
     }
 
     #[cfg(target_os = "windows")]
     {
-        WasapiDevice::new().map(|d| Box::new(d) as Box<dyn AudioDevice>)
+        return WasapiDevice::new().map(|d| Box::new(d) as Box<dyn AudioDevice>);
     }
 
     #[cfg(target_os = "android")]
     {
-        OboeDevice::new().map(|d| Box::new(d) as Box<dyn AudioDevice>)
+        return OboeDevice::new().map(|d| Box::new(d) as Box<dyn AudioDevice>);
     }
 
     #[cfg(target_os = "ohos")]
     {
-        OhosDevice::new().map(|d| Box::new(d) as Box<dyn AudioDevice>)
+        return OhosDevice::new().map(|d| Box::new(d) as Box<dyn AudioDevice>);
     }
 
     #[cfg(not(any(
@@ -73,6 +71,6 @@ pub(crate) fn create_device() -> Result<Box<dyn AudioDevice>, AudioError> {
         target_os = "ohos"
     )))]
     {
-        Ok(Box::new(DummyDevice::new()))
+        return Ok(Box::new(DummyDevice::new()));
     }
 }
