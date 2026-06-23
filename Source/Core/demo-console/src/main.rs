@@ -26,6 +26,7 @@ use parking_lot::Mutex;
 use uniasset::audio::{AudioAsset, SampleFormat};
 use uniasset_audioplayer::mixer::AudioStream;
 use uniasset_audioplayer::player::AudioPlayer;
+use uniasset_audioplayer::stream::buffered_stream::BufferedAudioStream;
 use uniasset_audioplayer::AudioError;
 
 // ── AssetStream: adapts uniasset::AudioAsset → AudioStream ──────────────
@@ -53,10 +54,11 @@ struct AssetStream {
 }
 
 impl AssetStream {
-    /// Load an audio file from `path` and prepare it for playback.
+    /// Load an audio file from `path` for real-time streaming decode.
     ///
-    /// The asset is decoded to Float32 PCM internally so `read()` can
-    /// reinterpret the raw bytes directly as `f32` samples.
+    /// No `prepare()` is called — decoding happens on-demand in `read()` so
+    /// we can test the buffered-stream worker keeping the ring buffer full
+    /// while the audio thread never blocks.
     fn from_file(path: &str) -> Result<Self, String> {
         let asset = AudioAsset::default();
 
@@ -64,11 +66,6 @@ impl AssetStream {
         asset
             .load_file(path, SampleFormat::Float32)
             .map_err(|e| format!("Failed to load '{}': {}", path, e))?;
-
-        // Pre-decode to PCM for efficient reads on the audio thread.
-        asset
-            .prepare()
-            .map_err(|e| format!("Failed to prepare '{}': {}", path, e))?;
 
         let sample_rate = asset
             .get_sample_rate()
@@ -291,16 +288,22 @@ fn cmd_play(state: &Arc<Mutex<ShellState>>, path: &str) {
         0.0
     };
 
-    // Keep a concrete Arc<AssetStream> for the entry, and clone it
-    // into a type-erased Arc<dyn AudioStream> for the mixer.
+    // Keep a concrete Arc<AssetStream> for the entry display, and wrap it
+    // in a BufferedAudioStream for wait-free reads on the audio thread.
     let stream_arc = Arc::new(asset_stream);
-    let trait_obj: Arc<dyn AudioStream> = stream_arc.clone();
+    let buffered = match BufferedAudioStream::new(stream_arc.clone()) {
+        Ok(b) => Arc::new(b),
+        Err(e) => {
+            println!("Error creating buffered stream: {}", e);
+            return;
+        }
+    };
 
     let mut s = state.lock();
     let id = s.next_id;
     s.next_id += 1;
 
-    let handle = s.player.add_stream(trait_obj);
+    let handle = s.player.add_stream(buffered, true);
 
     s.entries.insert(
         id,
