@@ -258,8 +258,10 @@ fn worker_thread() {
                     group.buffer.write(&temp_buf[..samples_read]);
                 }
 
-                // Still below watermark?
-                if group.buffer.fill_level() < BUFFER_WATERMARK {
+                // Still below watermark?  Skip groups whose inner stream
+                // has already ended — no more data will ever arrive, so
+                // the buffer can never reach the watermark.
+                if !group.stream.is_eof() && group.buffer.fill_level() < BUFFER_WATERMARK {
                     all_above = false;
                 }
             }
