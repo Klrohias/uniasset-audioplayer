@@ -1,0 +1,19 @@
+{
+    "name": "Uniasset.AudioPlayer.Supports.Uniasset",
+    "rootNamespace": "",
+    "references": [
+        "GUID:2c4d2aaa0c5504bc982c1ce00e74a8f6",
+        "GUID:ffcf5909d5ea480fa8aca694e2df2f08"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "UAP_Uniasset_Supports"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

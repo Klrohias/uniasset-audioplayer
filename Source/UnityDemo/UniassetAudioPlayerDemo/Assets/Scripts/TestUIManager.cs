@@ -1,4 +1,5 @@
 using Uniasset.AudioPlayer;
+using Uniasset.Audio;
 using UnityEngine;
 
 namespace UniassetAudioPlayerDemo
@@ -26,7 +27,7 @@ namespace UniassetAudioPlayerDemo
             GUILayout.Space(8);
 
             // ---- Play ----
-            GUI.enabled = _clip != null && _player == null;
+            GUI.enabled = _player == null;
             if (GUILayout.Button("Play", GUILayout.Height(36)))
             {
                 Play();
@@ -73,7 +74,12 @@ namespace UniassetAudioPlayerDemo
             Stop();
 
             _player = new AudioPlayer();
-            _handle = _player.Play(_clip);
+            var audioAsset = new AudioAsset();
+            audioAsset.Load($"{Application.streamingAssetsPath}/test.mp3");
+
+            var buffered = new BufferedAudioStream(new AudioAssetStream(audioAsset));
+
+            _handle = _player.Play(buffered);
             _handleActive = true;
         }
 
