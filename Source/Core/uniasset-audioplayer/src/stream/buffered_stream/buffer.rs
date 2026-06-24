@@ -26,9 +26,9 @@ impl BufferedAudioStream {
     pub fn new(inner: Arc<dyn AudioStream>) -> Result<Self, io::Error> {
         let worker_handle = acquire_worker_handle()?;
 
-        // 4-second ring buffer: sample_rate × channels × 4
+        // 12-second ring buffer: sample_rate × channels × 12
         let one_second_samples = inner.sample_rate() * inner.channels() as u32;
-        let buffer: Arc<AudioBuffer> = AudioBuffer::new(one_second_samples as usize * 4).into();
+        let buffer: Arc<AudioBuffer> = AudioBuffer::new(one_second_samples as usize * 12).into();
 
         worker_handle.add_buffer_group(inner.clone(), buffer.clone());
         worker_handle.notify();

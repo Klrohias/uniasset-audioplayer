@@ -45,11 +45,11 @@ impl AudioBuffer {
         }
     }
 
-    /// Total number of `f32` samples the buffer can hold.
-    #[inline]
-    pub fn capacity(&self) -> usize {
-        self.capacity
-    }
+    // /// Total number of `f32` samples the buffer can hold.
+    // #[inline]
+    // pub fn capacity(&self) -> usize {
+    //     self.capacity
+    // }
 
     /// Number of samples currently available to read.
     ///
@@ -157,15 +157,15 @@ impl AudioBuffer {
         self.read_ptr.store(write, Ordering::Release);
     }
 
-    /// Atomically drain all available samples and return how many were
-    /// discarded. Useful when tearing down a stream.
-    pub fn drain(&self) -> u64 {
-        let write = self.write_ptr.load(Ordering::Acquire);
-        let read = self.read_ptr.load(Ordering::Relaxed);
-        let drained = write - read;
-        self.read_ptr.store(write, Ordering::Release);
-        drained
-    }
+    // /// Atomically drain all available samples and return how many were
+    // /// discarded. Useful when tearing down a stream.
+    // pub fn drain(&self) -> u64 {
+    //     let write = self.write_ptr.load(Ordering::Acquire);
+    //     let read = self.read_ptr.load(Ordering::Relaxed);
+    //     let drained = write - read;
+    //     self.read_ptr.store(write, Ordering::Release);
+    //     drained
+    // }
 }
 
 struct BufferGroup {
