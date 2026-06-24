@@ -118,6 +118,14 @@ namespace Uniasset.AudioPlayer
         }
 
         /// <summary>
+        /// Called during <see cref="Dispose"/> after the disposed-once guard.
+        /// Override in subclasses to release additional resources.
+        /// </summary>
+        protected virtual void DisposeCore()
+        {
+        }
+
+        /// <summary>
         /// Dispose this stream. Drops the C caller's reference.
         /// The underlying stream continues to live in the mixer independently.
         /// Safe to call multiple times.
@@ -127,6 +135,7 @@ namespace Uniasset.AudioPlayer
             if (Interlocked.CompareExchange(ref _disposedFlag, 1, 0) != 0)
                 return;
 
+            DisposeCore();
             UnsafeHandle.Destroy();
 
             GC.SuppressFinalize(this);

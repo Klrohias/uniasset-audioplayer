@@ -109,6 +109,16 @@ namespace Uniasset.AudioPlayer.Unsafe
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         public static extern void* UAP_BufferedAudioStream_Create(void* stream);
 
+        /// <summary>
+        /// Wrap a native audio stream (callbacks struct) in a buffered stream.
+        /// <c>stream</c> must point to a valid <see cref="NativeAudioStream"/>.
+        /// The struct is copied — the caller retains ownership.
+        /// Returns a new native handle, or null on failure.
+        /// </summary>
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        public static extern void* UAP_BufferedAudioStream_CreateFromNative(
+            [NativeTypeName("const NativeAudioStream *")] NativeAudioStream* stream);
+
         // ==================================================================
         // Internal Audio Stream (6 functions)
         // ==================================================================
