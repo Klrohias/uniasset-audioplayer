@@ -27,8 +27,8 @@ pub type PlayHandleWrapper = Box<Arc<PlayHandle>>;
 /// reaches EOF or [`UAP_PlayHandle_Stop`] is called.
 ///
 /// # Safety
-/// `handle` must be a valid handle from [`UAP_AudioPlayer_AddStream`]
-/// and must not have been destroyed already.
+/// `handle` must be a valid handle from [`UAP_AudioPlayer_AddStream`] or
+/// [`UAP_AudioPlayer_AddNativeStream`] and must not have been destroyed already.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn UAP_PlayHandle_Destroy(handle: NativeHandle) {
     clear_error();
@@ -148,6 +148,7 @@ pub unsafe extern "C" fn UAP_PlayHandle_Seek(handle: NativeHandle, frame: u64) {
 type NativeModifierFn =
     unsafe extern "C" fn(buffer: *mut f32, sample_count: u64, user_data: *mut c_void);
 
+#[repr(C)]
 pub struct NativeModifier {
     cb: NativeModifierFn,
     user_data: *mut c_void,
@@ -194,5 +195,9 @@ pub unsafe extern "C" fn UAP_PlayHandle_SetModifier(
 ) {
     clear_error();
     let wrapper = ManuallyDrop::new(PlayHandleWrapper::from_handle(handle));
-    wrapper.set_modifier(Some(make_modifier(modifier)));
+    if modifier.is_null() {
+        wrapper.set_modifier(None);
+    } else {
+        wrapper.set_modifier(Some(make_modifier(modifier)));
+    }
 }

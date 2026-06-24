@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using Uniasset.AudioPlayer.Unsafe;
+using UnityEngine;
 
 namespace Uniasset.AudioPlayer
 {
@@ -102,10 +103,28 @@ namespace Uniasset.AudioPlayer
             if (stream == null)
                 throw new ArgumentNullException(nameof(stream));
 
+            // Fast path: InternalAudioStream — pass native handle directly
+            if (stream is InternalAudioStream internalStream)
+            {
+                var playHandlePtr = UnsafeHandle.AddStream(
+                    internalStream.UnsafeHandle, playImmediate);
+
+                var playHandle = new PlayHandle(playHandlePtr, default);
+
+                lock (_lock)
+                {
+                    _activeHandles.Add(playHandle);
+                }
+
+                return playHandle;
+            }
+
+            // Fallback: wrap managed IAudioStream in C callbacks
             var binding = AudioStreamFactory.CreateBinding(stream);
             try
             {
-                var playHandlePtr = UnsafeHandle.AddStream(ref binding.NativeStream, playImmediate);
+                var playHandlePtr = UnsafeHandle.AddStream(
+                    ref binding.NativeStream, playImmediate);
 
                 var playHandle = new PlayHandle(playHandlePtr, binding);
 

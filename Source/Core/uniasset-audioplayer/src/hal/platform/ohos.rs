@@ -201,9 +201,8 @@ impl OhosDevice {
         }
 
         // Configure the stream for music playback at 48 kHz stereo f32.
-        let ret = unsafe {
-            OH_AudioStreamBuilder_SetRendererInfo(builder, AUDIOSTREAM_USAGE_MUSIC)
-        };
+        let ret =
+            unsafe { OH_AudioStreamBuilder_SetRendererInfo(builder, AUDIOSTREAM_USAGE_MUSIC) };
         if ret != AUDIOSTREAM_SUCCESS {
             unsafe {
                 OH_AudioStreamBuilder_Destroy(builder);
@@ -214,9 +213,8 @@ impl OhosDevice {
             )));
         }
 
-        let ret = unsafe {
-            OH_AudioStreamBuilder_SetLatencyMode(builder, AUDIOSTREAM_LATENCY_MODE_FAST)
-        };
+        let ret =
+            unsafe { OH_AudioStreamBuilder_SetLatencyMode(builder, AUDIOSTREAM_LATENCY_MODE_FAST) };
         if ret != AUDIOSTREAM_SUCCESS {
             unsafe {
                 OH_AudioStreamBuilder_Destroy(builder);
@@ -227,12 +225,8 @@ impl OhosDevice {
             )));
         }
 
-        let ret = unsafe {
-            OH_AudioStreamBuilder_SetSamplingRate(
-                builder,
-                DEFAULT_SAMPLE_RATE as i32,
-            )
-        };
+        let ret =
+            unsafe { OH_AudioStreamBuilder_SetSamplingRate(builder, DEFAULT_SAMPLE_RATE as i32) };
         if ret != AUDIOSTREAM_SUCCESS {
             unsafe {
                 OH_AudioStreamBuilder_Destroy(builder);
@@ -243,12 +237,8 @@ impl OhosDevice {
             )));
         }
 
-        let ret = unsafe {
-            OH_AudioStreamBuilder_SetChannelCount(
-                builder,
-                DEFAULT_CHANNEL_COUNT as i32,
-            )
-        };
+        let ret =
+            unsafe { OH_AudioStreamBuilder_SetChannelCount(builder, DEFAULT_CHANNEL_COUNT as i32) };
         if ret != AUDIOSTREAM_SUCCESS {
             unsafe {
                 OH_AudioStreamBuilder_Destroy(builder);
@@ -260,10 +250,7 @@ impl OhosDevice {
         }
 
         let ret = unsafe {
-            OH_AudioStreamBuilder_SetSampleFormat(
-                builder,
-                AUDIOSTREAM_SAMPLE_FORMAT_F32LE,
-            )
+            OH_AudioStreamBuilder_SetSampleFormat(builder, AUDIOSTREAM_SAMPLE_FORMAT_F32LE)
         };
         if ret != AUDIOSTREAM_SUCCESS {
             unsafe {
@@ -276,10 +263,7 @@ impl OhosDevice {
         }
 
         let ret = unsafe {
-            OH_AudioStreamBuilder_SetEncodingType(
-                builder,
-                AUDIOSTREAM_ENCODING_TYPE_RAW,
-            )
+            OH_AudioStreamBuilder_SetEncodingType(builder, AUDIOSTREAM_ENCODING_TYPE_RAW)
         };
         if ret != AUDIOSTREAM_SUCCESS {
             unsafe {
@@ -329,17 +313,13 @@ impl OhosDevice {
         // Query the actual hardware format from the renderer.
         // Fall back to defaults if the query fails.
         let mut sample_rate: i32 = DEFAULT_SAMPLE_RATE as i32;
-        let ret = unsafe {
-            OH_AudioRenderer_GetSamplingRate(renderer, &mut sample_rate)
-        };
+        let ret = unsafe { OH_AudioRenderer_GetSamplingRate(renderer, &mut sample_rate) };
         if ret != AUDIOSTREAM_SUCCESS {
             sample_rate = DEFAULT_SAMPLE_RATE as i32;
         }
 
         let mut actual_channels: i32 = DEFAULT_CHANNEL_COUNT as i32;
-        let ret = unsafe {
-            OH_AudioRenderer_GetChannelCount(renderer, &mut actual_channels)
-        };
+        let ret = unsafe { OH_AudioRenderer_GetChannelCount(renderer, &mut actual_channels) };
         if ret != AUDIOSTREAM_SUCCESS {
             actual_channels = DEFAULT_CHANNEL_COUNT as i32;
         }
@@ -399,9 +379,7 @@ impl AudioDevice for OhosDevice {
 
         // Reconstruct the Box so Drop can reclaim it later.
         // Safety: fat_ptr was created from Box::into_raw just above.
-        self._callback_box = Some(unsafe {
-            Box::from_raw(fat_ptr as *mut dyn AudioCallback)
-        });
+        self._callback_box = Some(unsafe { Box::from_raw(fat_ptr as *mut dyn AudioCallback) });
         self.running = true;
         Ok(())
     }

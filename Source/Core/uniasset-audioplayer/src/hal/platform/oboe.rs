@@ -20,8 +20,8 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use oboe::{
     AudioOutputCallback, AudioOutputStream, AudioStream, AudioStreamAsync, AudioStreamBase,
-    AudioStreamBuilder, ContentType, DataCallbackResult, Output, PerformanceMode,
-    SharingMode, Stereo, Usage,
+    AudioStreamBuilder, ContentType, DataCallbackResult, Output, PerformanceMode, SharingMode,
+    Stereo, Usage,
 };
 
 use crate::error::AudioError;

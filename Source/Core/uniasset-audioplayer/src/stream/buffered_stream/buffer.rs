@@ -6,9 +6,7 @@ use crate::{
     AudioError,
 };
 
-/// Fraction of the ring buffer that must be filled before the worker stops
-/// topping up.  0.6 = 60 %.
-pub(crate) const BUFFER_WATERMARK: f32 = 0.6;
+use super::BUFFER_WATERMARK;
 
 /// A stream wrapper that maintains a 4-second ring buffer filled ahead of
 /// time by a background worker thread.

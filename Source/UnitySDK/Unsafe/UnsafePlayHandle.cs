@@ -98,9 +98,9 @@ namespace Uniasset.AudioPlayer.Unsafe
         }
 
         /// <summary>
-        /// Install a pre-mix modifier callback. <paramref name="modifier"/> must
-        /// point to a valid <see cref="NativeModifier"/> struct. The callback
-        /// runs on the audio thread and must be wait-free.
+        /// Install or remove a pre-mix modifier callback.
+        /// Pass null to remove a previously installed modifier.
+        /// The callback runs on the audio thread and must be wait-free.
         /// </summary>
         public void SetModifier(NativeModifier* modifier)
         {

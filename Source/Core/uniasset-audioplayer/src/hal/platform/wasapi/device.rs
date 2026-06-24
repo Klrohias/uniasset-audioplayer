@@ -21,28 +21,24 @@
 //! `device_changed`. A `RwLock` protects the format (written only on
 //! endpoint switch). No mutex is held during buffer processing.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
 use parking_lot::RwLock as PLRwLock;
 
-use windows::Win32::Media::Audio::{
-    IAudioClient, IAudioRenderClient, IMMDeviceEnumerator,
-    AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
-    WAVEFORMATEX, eRender, eConsole,
-};
-use windows::Win32::System::Com::{
-    CoCreateInstance, CoTaskMemFree, CLSCTX_ALL,
-};
-use windows::Win32::System::Threading::{
-    CreateEventW, ResetEvent, SetEvent,
-    WaitForMultipleObjects, INFINITE,
-};
-use windows::Win32::Foundation::{HANDLE, WAIT_OBJECT_0, CloseHandle};
 use windows::core::PCWSTR;
+use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
+use windows::Win32::Media::Audio::{
+    eConsole, eRender, IAudioClient, IAudioRenderClient, IMMDeviceEnumerator,
+    AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, WAVEFORMATEX,
+};
+use windows::Win32::System::Com::{CoCreateInstance, CoTaskMemFree, CLSCTX_ALL};
+use windows::Win32::System::Threading::{
+    CreateEventW, ResetEvent, SetEvent, WaitForMultipleObjects, INFINITE,
+};
 
 use crate::error::AudioError;
 use crate::hal::AudioCallback;
@@ -144,26 +140,21 @@ impl WasapiClient {
         ensure_com_initialized();
 
         // 1. Enumerator
-        let enumerator: IMMDeviceEnumerator = unsafe {
-            CoCreateInstance(&CLSID_MMDEVICE_ENUMERATOR, None, CLSCTX_ALL)
-        }
-        .map_err(|_| AudioError::DeviceNotFound)?;
+        let enumerator: IMMDeviceEnumerator =
+            unsafe { CoCreateInstance(&CLSID_MMDEVICE_ENUMERATOR, None, CLSCTX_ALL) }
+                .map_err(|_| AudioError::DeviceNotFound)?;
 
         // 2. Default endpoint
-        let device = unsafe {
-            enumerator.GetDefaultAudioEndpoint(eRender, eConsole)
-        }
-        .map_err(|_| AudioError::DeviceNotFound)?;
+        let device = unsafe { enumerator.GetDefaultAudioEndpoint(eRender, eConsole) }
+            .map_err(|_| AudioError::DeviceNotFound)?;
 
         // 3. Activate IAudioClient
-        let audio_client: IAudioClient = unsafe {
-            device.Activate::<IAudioClient>(CLSCTX_ALL, None)
-        }
-        .map_err(|_| AudioError::DeviceBusy)?;
+        let audio_client: IAudioClient =
+            unsafe { device.Activate::<IAudioClient>(CLSCTX_ALL, None) }
+                .map_err(|_| AudioError::DeviceBusy)?;
 
         // 4. Mix format
-        let mix_ptr = unsafe { audio_client.GetMixFormat() }
-            .map_err(|e| wasapi_err(e))?;
+        let mix_ptr = unsafe { audio_client.GetMixFormat() }.map_err(|e| wasapi_err(e))?;
         let (sample_rate, channels) = parse_wave_format(mix_ptr);
         let format = AudioFormat::new(sample_rate, channels);
 
@@ -173,52 +164,49 @@ impl WasapiClient {
                 AUDCLNT_SHAREMODE_SHARED,
                 AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
                 HNS_BUFFER_DURATION,
-                0,             // periodicity: engine decides
+                0, // periodicity: engine decides
                 mix_ptr,
-                None,          // AudioSessionGuid
+                None, // AudioSessionGuid
             )
         };
         unsafe { CoTaskMemFree(Some(mix_ptr as *const _)) };
         init_res.map_err(|e| wasapi_err(e))?;
 
         // 6. Buffer size
-        let buffer_frame_count = unsafe { audio_client.GetBufferSize() }
-            .map_err(|e| wasapi_err(e))?;
+        let buffer_frame_count =
+            unsafe { audio_client.GetBufferSize() }.map_err(|e| wasapi_err(e))?;
 
         // 7. Buffer event (auto-reset)
-        let buffer_event = unsafe {
-            CreateEventW(None, false, false, PCWSTR::null())
-        }
-        .map_err(|e| wasapi_err(e))?;
-
-        // 8. Register event
-        unsafe { audio_client.SetEventHandle(buffer_event) }
+        let buffer_event = unsafe { CreateEventW(None, false, false, PCWSTR::null()) }
             .map_err(|e| wasapi_err(e))?;
 
-        // 9. Render client
-        let render_client: IAudioRenderClient = unsafe {
-            audio_client.GetService::<IAudioRenderClient>()
-        }
-        .map_err(|e| wasapi_err(e))?;
+        // 8. Register event
+        unsafe { audio_client.SetEventHandle(buffer_event) }.map_err(|e| wasapi_err(e))?;
 
-        Ok((Self {
-            audio_client,
-            render_client,
-            buffer_event,
-            buffer_frame_count,
-        }, format))
+        // 9. Render client
+        let render_client: IAudioRenderClient =
+            unsafe { audio_client.GetService::<IAudioRenderClient>() }
+                .map_err(|e| wasapi_err(e))?;
+
+        Ok((
+            Self {
+                audio_client,
+                render_client,
+                buffer_event,
+                buffer_frame_count,
+            },
+            format,
+        ))
     }
 
     /// Start the audio stream.
     fn start(&self) -> Result<(), AudioError> {
-        unsafe { self.audio_client.Start() }
-            .map_err(|e| wasapi_err(e))
+        unsafe { self.audio_client.Start() }.map_err(|e| wasapi_err(e))
     }
 
     /// Stop the audio stream.
     fn stop(&self) -> Result<(), AudioError> {
-        unsafe { self.audio_client.Stop() }
-            .map_err(|e| wasapi_err(e))
+        unsafe { self.audio_client.Stop() }.map_err(|e| wasapi_err(e))
     }
 
     /// Fill one buffer period.
@@ -231,8 +219,7 @@ impl WasapiClient {
         channels: u16,
         temp_buf: &mut Vec<f32>,
     ) -> Result<(), ()> {
-        let padding = unsafe { self.audio_client.GetCurrentPadding() }
-            .map_err(|_| ())?;
+        let padding = unsafe { self.audio_client.GetCurrentPadding() }.map_err(|_| ())?;
         let frames_available = self.buffer_frame_count.saturating_sub(padding);
         if frames_available == 0 {
             return Ok(());
@@ -246,7 +233,9 @@ impl WasapiClient {
             temp_buf.reserve(required - temp_buf.len());
         }
         // SAFETY: all elements will be initialised before they are read.
-        unsafe { temp_buf.set_len(required); }
+        unsafe {
+            temp_buf.set_len(required);
+        }
 
         // Pull from callback.
         let frames_written = callback.pull(&mut temp_buf[..required]);
@@ -260,23 +249,16 @@ impl WasapiClient {
         }
 
         // Get WASAPI buffer.
-        let data_ptr = unsafe {
-            self.render_client.GetBuffer(frames_available)
-        }.map_err(|_| ())?;
+        let data_ptr = unsafe { self.render_client.GetBuffer(frames_available) }.map_err(|_| ())?;
 
         // Copy into WASAPI buffer.
         unsafe {
-            let dst = std::slice::from_raw_parts_mut(
-                data_ptr as *mut f32,
-                required,
-            );
+            let dst = std::slice::from_raw_parts_mut(data_ptr as *mut f32, required);
             dst.copy_from_slice(&temp_buf[..required]);
         }
 
         // Release.
-        unsafe {
-            self.render_client.ReleaseBuffer(frames_available, 0)
-        }.map_err(|_| ())?;
+        unsafe { self.render_client.ReleaseBuffer(frames_available, 0) }.map_err(|_| ())?;
 
         Ok(())
     }
@@ -295,10 +277,7 @@ impl Drop for WasapiClient {
 // ── Audio thread ──────────────────────────────────────────────────────────
 
 /// Build a client with retry-on-failure.
-fn try_build_client(
-    client: &mut Option<WasapiClient>,
-    format: &mut AudioFormat,
-) {
+fn try_build_client(client: &mut Option<WasapiClient>, format: &mut AudioFormat) {
     for attempt in 0..MAX_REBUILD_ATTEMPTS {
         match WasapiClient::build() {
             Ok((c, f)) => {
@@ -314,11 +293,7 @@ fn try_build_client(
     }
 }
 
-fn run_audio_thread(
-    inner: Arc<DeviceInner>,
-    cmd_rx: mpsc::Receiver<Command>,
-    cmd_event: HANDLE,
-) {
+fn run_audio_thread(inner: Arc<DeviceInner>, cmd_rx: mpsc::Receiver<Command>, cmd_event: HANDLE) {
     ensure_com_initialized();
 
     let mut callback: Option<Box<dyn AudioCallback>> = None;
@@ -375,13 +350,13 @@ fn run_audio_thread(
             match &client {
                 Some(c) => {
                     let handles = [c.buffer_event, cmd_event];
-                    let result = unsafe {
-                        WaitForMultipleObjects(&handles, false, INFINITE)
-                    };
+                    let result = unsafe { WaitForMultipleObjects(&handles, false, INFINITE) };
 
                     if result == WAIT_OBJECT_0 {
                         if let Some(ref cb) = callback {
-                            if c.fill_buffer(cb.as_ref(), current_format.channels, &mut temp_buf).is_err() {
+                            if c.fill_buffer(cb.as_ref(), current_format.channels, &mut temp_buf)
+                                .is_err()
+                            {
                                 inner.device_changed.store(true, Ordering::Release);
                             }
                         }
@@ -548,20 +523,14 @@ impl WasapiDevice {
 
         // ── Query initial format ──────────────────────────────────────
         let (sample_rate, channels) = {
-            let enumerator: IMMDeviceEnumerator = unsafe {
-                CoCreateInstance(&CLSID_MMDEVICE_ENUMERATOR, None, CLSCTX_ALL)
-            }
-            .map_err(|_| AudioError::DeviceNotFound)?;
-            let device = unsafe {
-                enumerator.GetDefaultAudioEndpoint(eRender, eConsole)
-            }
-            .map_err(|_| AudioError::DeviceNotFound)?;
-            let ac: IAudioClient = unsafe {
-                device.Activate::<IAudioClient>(CLSCTX_ALL, None)
-            }
-            .map_err(|_| AudioError::DeviceBusy)?;
-            let mix_ptr = unsafe { ac.GetMixFormat() }
-                .map_err(|e| wasapi_err(e))?;
+            let enumerator: IMMDeviceEnumerator =
+                unsafe { CoCreateInstance(&CLSID_MMDEVICE_ENUMERATOR, None, CLSCTX_ALL) }
+                    .map_err(|_| AudioError::DeviceNotFound)?;
+            let device = unsafe { enumerator.GetDefaultAudioEndpoint(eRender, eConsole) }
+                .map_err(|_| AudioError::DeviceNotFound)?;
+            let ac: IAudioClient = unsafe { device.Activate::<IAudioClient>(CLSCTX_ALL, None) }
+                .map_err(|_| AudioError::DeviceBusy)?;
+            let mix_ptr = unsafe { ac.GetMixFormat() }.map_err(|e| wasapi_err(e))?;
             let fmt = parse_wave_format(mix_ptr);
             unsafe { CoTaskMemFree(Some(mix_ptr as *const _)) };
             fmt
@@ -577,10 +546,8 @@ impl WasapiDevice {
 
         // ── Command channel ───────────────────────────────────────────
         let (cmd_tx, cmd_rx) = mpsc::channel::<Command>();
-        let cmd_event = unsafe {
-            CreateEventW(None, true, false, PCWSTR::null())
-        }
-        .map_err(|e| wasapi_err(e))?;
+        let cmd_event = unsafe { CreateEventW(None, true, false, PCWSTR::null()) }
+            .map_err(|e| wasapi_err(e))?;
 
         Ok(Self {
             inner,
@@ -606,9 +573,13 @@ impl AudioDevice for WasapiDevice {
         }
 
         // Take ownership of the command channel.
-        let cmd_tx = self.cmd_tx.take()
+        let cmd_tx = self
+            .cmd_tx
+            .take()
             .ok_or_else(|| wasapi_err("device already started"))?;
-        let cmd_rx = self.cmd_rx.take()
+        let cmd_rx = self
+            .cmd_rx
+            .take()
             .ok_or_else(|| wasapi_err("device already started"))?;
 
         let cmd_event = self.cmd_event;
@@ -622,14 +593,20 @@ impl AudioDevice for WasapiDevice {
         };
 
         // Send the Start command.
-        cmd_tx.send(Command::Start(callback)).map_err(|_| wasapi_err("audio thread gone"))?;
+        cmd_tx
+            .send(Command::Start(callback))
+            .map_err(|_| wasapi_err("audio thread gone"))?;
         let _ = unsafe { SetEvent(cmd_event) };
 
         // Spawn the audio thread.
         let handle = thread::Builder::new()
             .name("uniasset-wasapi".into())
             .spawn(move || {
-                let WasapiThreadContext { inner, cmd_rx, cmd_event_ptr } = ctx;
+                let WasapiThreadContext {
+                    inner,
+                    cmd_rx,
+                    cmd_event_ptr,
+                } = ctx;
                 let cmd_event = HANDLE(cmd_event_ptr as *mut std::ffi::c_void);
                 run_audio_thread(inner, cmd_rx, cmd_event);
                 // Let cmd_rx, HANDLE drop here; COM objects dropped in run_audio_thread.

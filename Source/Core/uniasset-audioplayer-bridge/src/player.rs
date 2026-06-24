@@ -1,6 +1,7 @@
 //! C FFI functions for the high-level [`AudioPlayer`].
 //!
 //! The `NativeHandle` for `AudioPlayer` encodes a `Box<Arc<AudioPlayer>>`.
+//! The `NativeHandle` for an audio stream encodes a `Box<Arc<dyn AudioStream>>`.
 
 use std::mem::ManuallyDrop;
 use std::ptr::{self, null};
@@ -9,7 +10,7 @@ use std::sync::Arc;
 use uniasset_audioplayer::mixer::AudioStream;
 use uniasset_audioplayer::player::AudioPlayer;
 
-use crate::audio_stream::NativeAudioStream;
+use crate::audio_stream::{NativeAudioStream, AudioStreamWrapper};
 use crate::error::clear_error;
 use crate::object::{failible_to_native, NativeHandle, NativeHandleExts};
 
@@ -74,7 +75,7 @@ pub unsafe extern "C" fn UAP_AudioPlayer_Format(
 // Stream management
 // ---------------------------------------------------------------------------
 
-/// Add an audio stream to the player.
+/// Add an audio stream backed by C function pointers to the player.
 ///
 /// `stream` must point to a valid `#[repr(C)] NativeAudioStream` that the
 /// caller will keep alive for the duration of playback. The Rust side stores
@@ -85,7 +86,7 @@ pub unsafe extern "C" fn UAP_AudioPlayer_Format(
 ///
 /// Returns a new [`UAP_PlayHandle`] that controls this stream's playback.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn UAP_AudioPlayer_AddStream(
+pub unsafe extern "C" fn UAP_AudioPlayer_AddNativeStream(
     handle: NativeHandle,
     stream: *const NativeAudioStream,
     play_immediate: u8,
@@ -96,6 +97,36 @@ pub unsafe extern "C" fn UAP_AudioPlayer_AddStream(
     let play_immediate = play_immediate == 1;
 
     let play_handle = wrapper.add_stream(stream, play_immediate);
+    Box::new(Arc::new(play_handle)).into_handle()
+}
+
+/// Add an audio stream to the player.
+///
+/// `stream` must be a valid `NativeHandle` encoding a
+/// `Box<Arc<dyn AudioStream>>`. The handle is <b>not</b> consumed —
+/// the caller remains responsible for destroying it via
+/// [`UAP_InternalAudioStream_Destroy`].
+///
+/// If `play_immediate` is non-zero, the stream begins playing immediately;
+/// otherwise it is added in a paused state.
+///
+/// Returns a new [`UAP_PlayHandle`] that controls this stream's playback.
+///
+/// # Safety
+/// `stream` must be a valid handle and must not have been destroyed already.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn UAP_AudioPlayer_AddStream(
+    handle: NativeHandle,
+    stream: NativeHandle,
+    play_immediate: u8,
+) -> NativeHandle {
+    clear_error();
+    let wrapper = ManuallyDrop::new(AudioPlayerWrapper::from_handle(handle));
+    let stream = ManuallyDrop::new(AudioStreamWrapper::from_handle(stream));
+    let stream_cloned = Arc::clone(&stream);
+    let play_immediate = play_immediate == 1;
+
+    let play_handle = wrapper.add_stream(stream_cloned, play_immediate);
     Box::new(Arc::new(play_handle)).into_handle()
 }
 

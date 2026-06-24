@@ -5,6 +5,21 @@ using Uniasset.AudioPlayer.Unsafe;
 namespace Uniasset.AudioPlayer
 {
     /// <summary>
+    /// A pre-mix DSP modifier callback. Called on the audio thread with a
+    /// single stream's interleaved f32 PCM buffer, before it is mixed
+    /// into the output. The callback may modify samples in-place.
+    /// </summary>
+    /// <param name="pcmBuffer">
+    /// The interleaved f32 sample buffer for this stream.
+    /// <c>pcmBuffer.Length</c> is the total number of f32 values (frames × channels).
+    /// </param>
+    /// <remarks>
+    /// MUST be wait-free: no locks, no allocations, no blocking I/O.
+    /// This runs on the real-time audio thread.
+    /// </remarks>
+    public delegate void ModifierCallback(Span<float> pcmBuffer);
+
+    /// <summary>
     /// Controls playback for a single audio stream added to an <see cref="AudioPlayer"/>.
     /// Provides pause/resume, volume control, seeking, and DSP modifier installation.
     /// Must be disposed to release native resources.
@@ -81,16 +96,13 @@ namespace Uniasset.AudioPlayer
         /// MUST be wait-free (no locks, no allocations, no blocking I/O) —
         /// it runs on the real-time audio thread.
         /// </param>
-        public void SetModifier(ModifierCallback? callback)
+        public void SetModifier(ModifierCallback callback)
         {
-            // Remove existing modifier first — replace with no-op on the native
-            // side so the audio thread stops using the old callback, then free
-            // the GCHandle safely.
+            // Remove any existing modifier — the native side swap is atomic
+            // so it's safe to dispose the old binding after the install call.
             if (_modifierBinding.HasValue)
             {
-                // Install a no-op to neutralize the old modifier.
-                ModifierBridge.Install(UnsafeHandle, null);
-                _modifierBinding.Value.Free();
+                _modifierBinding.Value.Dispose();
                 _modifierBinding = null;
             }
 
@@ -111,12 +123,12 @@ namespace Uniasset.AudioPlayer
             if (Interlocked.CompareExchange(ref _disposedFlag, 1, 0) != 0)
                 return;
 
-            // Remove modifier first — replace with no-op so the audio thread
-            // stops using the managed callback before we free the GCHandle.
+            // Remove modifier — the native side swap is atomic so it's safe
+            // to dispose the GCHandle after the install(null) call.
             if (_modifierBinding.HasValue)
             {
                 ModifierBridge.Install(UnsafeHandle, null);
-                _modifierBinding.Value.Free();
+                _modifierBinding.Value.Dispose();
                 _modifierBinding = null;
             }
 

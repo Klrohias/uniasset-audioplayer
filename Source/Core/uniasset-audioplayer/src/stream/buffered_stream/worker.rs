@@ -10,7 +10,7 @@ use std::{
 
 use parking_lot::{Condvar, Mutex};
 
-use super::buffer::BUFFER_WATERMARK;
+use super::BUFFER_WATERMARK;
 use crate::mixer::AudioStream;
 
 static WORKER_REF_COUNTER: AtomicI32 = AtomicI32::new(0);

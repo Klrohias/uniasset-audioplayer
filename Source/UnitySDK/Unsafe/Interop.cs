@@ -56,12 +56,28 @@ namespace Uniasset.AudioPlayer.Unsafe
             [NativeTypeName("uint16_t *")] ushort* out_channels);
 
         // ==================================================================
-        // Stream Management (2 functions)
+        // Stream Management (3 functions)
         // ==================================================================
 
         /// <summary>
-        /// Add an audio stream to the player. <c>stream</c> must point to a valid
-        /// <see cref="NativeAudioStream"/> struct that the caller keeps alive.
+        /// Add an audio stream backed by C function pointers to the player.
+        /// <c>stream</c> must point to a valid <see cref="NativeAudioStream"/>
+        /// struct that the caller keeps alive.
+        /// If <c>playImmediate</c> is non-zero, the stream begins playing
+        /// immediately; otherwise it is added in a paused state.
+        /// Returns a <see cref="UnsafePlayHandle"/>.
+        /// </summary>
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        public static extern void* UAP_AudioPlayer_AddNativeStream(
+            void* handle,
+            void* stream,
+            [NativeTypeName("uint8_t")] byte playImmediate);
+
+        /// <summary>
+        /// Add an audio stream to the player.
+        /// <c>stream</c> must be a valid native handle encoding a
+        /// <c>Box&lt;Arc&lt;dyn AudioStream&gt;&gt;</c>. The handle is <b>not</b>
+        /// consumed.
         /// If <c>playImmediate</c> is non-zero, the stream begins playing
         /// immediately; otherwise it is added in a paused state.
         /// Returns a <see cref="UnsafePlayHandle"/>.
@@ -78,6 +94,62 @@ namespace Uniasset.AudioPlayer.Unsafe
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         [return: NativeTypeName("uint32_t")]
         public static extern uint UAP_AudioPlayer_StreamCount(void* handle);
+
+        // ==================================================================
+        // Buffered Stream (1 function)
+        // ==================================================================
+
+        /// <summary>
+        /// Wrap a native audio stream in a buffered stream for smooth playback.
+        /// <c>stream</c> must be a valid native handle. The handle is <b>not</b>
+        /// consumed. Returns a new native handle encoding the buffered stream,
+        /// or null on failure.
+        /// Destroy the returned handle with <see cref="UAP_InternalAudioStream_Destroy"/>.
+        /// </summary>
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        public static extern void* UAP_BufferedAudioStream_Create(void* stream);
+
+        // ==================================================================
+        // Internal Audio Stream (6 functions)
+        // ==================================================================
+
+        /// <summary>
+        /// Read interleaved f32 samples from an internal audio stream.
+        /// <c>buffer</c> must be at least <c>frameCount * channels</c> samples.
+        /// Returns the number of <b>samples</b> written, or 0 at EOF.
+        /// </summary>
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        public static extern ulong UAP_InternalAudioStream_Read(
+            void* handle, float* buffer, ulong frameCount);
+
+        /// <summary>
+        /// Seek to the given frame position. Returns non-zero on success.
+        /// On failure, the error is reported via <see cref="UAP_HasError"/>.
+        /// </summary>
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        [return: NativeTypeName("bool")]
+        public static extern byte UAP_InternalAudioStream_Seek(void* handle, ulong frame);
+
+        /// <summary>Returns non-zero if the stream has reached its end.</summary>
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        [return: NativeTypeName("bool")]
+        public static extern byte UAP_InternalAudioStream_IsEof(void* handle);
+
+        /// <summary>Return the number of channels (1 = mono, 2 = stereo).</summary>
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        [return: NativeTypeName("uint16_t")]
+        public static extern ushort UAP_InternalAudioStream_Channels(void* handle);
+
+        /// <summary>Return the sample rate in Hz (e.g., 44100, 48000).</summary>
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        [return: NativeTypeName("uint32_t")]
+        public static extern uint UAP_InternalAudioStream_SampleRate(void* handle);
+
+        /// <summary>
+        /// Destroy an internal audio stream handle.
+        /// </summary>
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        public static extern void UAP_InternalAudioStream_Destroy(void* handle);
 
         // ==================================================================
         // Device Control (2 functions)

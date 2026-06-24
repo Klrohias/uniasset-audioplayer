@@ -5,13 +5,16 @@
 //! through a stable C ABI.
 //!
 //! The struct is `#[repr(C)]` — the caller allocates it and passes a pointer
-//! to [`UAP_AudioPlayer_AddStream`]. The Rust side stores a copy; the caller
+//! to [`UAP_AudioPlayer_AddNativeStream`]. The Rust side stores a copy; the caller
 //! must keep the callbacks and `user_data` valid for the stream's lifetime.
 
 use std::ffi::c_void;
 
 use uniasset_audioplayer::mixer::AudioStream;
 use uniasset_audioplayer::AudioError;
+use std::sync::Arc;
+
+pub type AudioStreamWrapper = Box<Arc<dyn AudioStream>>;
 
 // ---------------------------------------------------------------------------
 // C callback types
@@ -21,7 +24,8 @@ use uniasset_audioplayer::AudioError;
 ///
 /// Reads up to `frame_count` frames into `buffer` (interleaved f32 samples).
 /// Returns the number of **samples** written (frames × channels), or 0 at EOF.
-type ReadFn = unsafe extern "C" fn(user_data: *mut c_void, buffer: *mut f32, frame_count: u64) -> u64;
+type ReadFn =
+    unsafe extern "C" fn(user_data: *mut c_void, buffer: *mut f32, frame_count: u64) -> u64;
 
 /// Seek to the given frame position. Returns true on success.
 type SeekFn = unsafe extern "C" fn(user_data: *mut c_void, frame: u64) -> bool;

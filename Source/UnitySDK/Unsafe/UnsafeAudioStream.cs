@@ -7,7 +7,7 @@ namespace Uniasset.AudioPlayer.Unsafe
 {
     /// <summary>
     /// <c>#[repr(C)]</c> struct matching the native <c>NativeAudioStream</c>.
-    /// Populate and pass a pointer to <c>UAP_AudioPlayer_AddStream</c>.
+    /// Populate and pass a pointer to <c>UAP_AudioPlayer_AddNativeStream</c>.
     /// </summary>
     [StructLayout(LayoutKind.Sequential)]
     public struct NativeAudioStream
@@ -225,7 +225,7 @@ namespace Uniasset.AudioPlayer.Unsafe
     /// </summary>
     public struct StreamBinding
     {
-        /// <summary>The native stream struct to pass to <c>UAP_AudioPlayer_AddStream</c>.</summary>
+        /// <summary>The native stream struct to pass to <c>UAP_AudioPlayer_AddNativeStream</c>.</summary>
         public NativeAudioStream NativeStream;
         private GCHandle _gcHandle;
 

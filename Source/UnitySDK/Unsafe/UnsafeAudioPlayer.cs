@@ -48,8 +48,9 @@ namespace Uniasset.AudioPlayer.Unsafe
         }
 
         /// <summary>
-        /// Add an audio stream to the player. <paramref name="stream"/> must point
-        /// to a valid <see cref="NativeAudioStream"/> that the caller keeps alive.
+        /// Add an audio stream backed by C function pointers to the player.
+        /// <paramref name="stream"/> must point to a valid
+        /// <see cref="NativeAudioStream"/> that the caller keeps alive.
         /// If <paramref name="playImmediate"/> is true, playback starts immediately;
         /// otherwise the stream is added in a paused state.
         /// Returns a <see cref="UnsafePlayHandle"/>.
@@ -57,7 +58,7 @@ namespace Uniasset.AudioPlayer.Unsafe
         /// </summary>
         public UnsafePlayHandle AddStream(NativeAudioStream* stream, bool playImmediate = true)
         {
-            var result = Interop.UAP_AudioPlayer_AddStream(
+            var result = Interop.UAP_AudioPlayer_AddNativeStream(
                 Instance, stream, playImmediate ? (byte)1 : (byte)0);
             NativeException.ThrowIfNeeded();
             if (result == null)
@@ -71,7 +72,30 @@ namespace Uniasset.AudioPlayer.Unsafe
         /// </summary>
         public unsafe UnsafePlayHandle AddStream(ref NativeAudioStream stream, bool playImmediate = true)
         {
-            return AddStream(&stream, playImmediate);
+            fixed (NativeAudioStream* structPtr = &stream)
+            {
+                return AddStream(structPtr, playImmediate);
+            }
+        }
+
+        /// <summary>
+        /// Add a pre-constructed native audio stream handle to the player.
+        /// <paramref name="streamHandle"/> must be a valid native handle encoding a
+        /// <c>Box&lt;Arc&lt;dyn AudioStream&gt;&gt;</c>. The handle is <b>not</b>
+        /// consumed — the caller remains responsible for destroying it.
+        /// If <paramref name="playImmediate"/> is true, playback starts immediately;
+        /// otherwise the stream is added in a paused state.
+        /// Returns a <see cref="UnsafePlayHandle"/>.
+        /// Throws <see cref="NativeException"/> on failure.
+        /// </summary>
+        public UnsafePlayHandle AddStream(UnsafeInternalAudioStream stream, bool playImmediate = true)
+        {
+            var result = Interop.UAP_AudioPlayer_AddStream(
+                Instance, stream.Instance, playImmediate ? (byte)1 : (byte)0);
+            NativeException.ThrowIfNeeded();
+            if (result == null)
+                throw new NativeException("Failed to add stream: native returned null");
+            return new UnsafePlayHandle(result);
         }
 
         /// <summary>
